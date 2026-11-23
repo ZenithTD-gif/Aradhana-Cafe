@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, Sparkles, Filter, Check } from 'lucide-react';
+import { Search, Zap, X } from 'lucide-react';
 import { Category, FoodItem } from '@/types';
 import { FoodCard } from './FoodCard';
 import { getCartStore } from '@/lib/store/cart-store';
@@ -9,20 +9,21 @@ import { getCartStore } from '@/lib/store/cart-store';
 interface MenuSectionProps {
   categories: Category[];
   foodItems: FoodItem[];
-  onOpenDetail?: (item: FoodItem) => void;
+  readyToServeFilter: boolean;
+  onClearReadyToServe: () => void;
 }
 
 export const MenuSection: React.FC<MenuSectionProps> = ({
   categories,
   foodItems,
-  onOpenDetail,
+  readyToServeFilter,
+  onClearReadyToServe,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [vegOnly, setVegOnly] = useState<boolean>(false);
   const [cartQuantities, setCartQuantities] = useState<Record<string, number>>({});
 
-  // Subscribe to cart changes for quantity displays
+  // Subscribe to cart changes for live quantity display
   React.useEffect(() => {
     const cartStore = getCartStore();
     const update = () => {
@@ -37,82 +38,90 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
     return cartStore.subscribe(update);
   }, []);
 
-  // Filter food items
+  // Filter items based on category, search, and ready-to-serve
   const filteredItems = useMemo(() => {
     return foodItems.filter(item => {
+      // Ready-to-serve filter (only available and quick prep <= 5 mins)
+      if (readyToServeFilter) {
+        if (!item.isAvailable || (item.preparationTimeMins || 5) > 5) {
+          return false;
+        }
+      }
+
       // Category filter
       if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
         return false;
       }
-      // Veg only toggle
-      if (vegOnly && !item.isVeg) {
-        return false;
-      }
-      // Search query
+
+      // Search keyword matching (supports partial keywords: Tea, Coffee, Rice, Roti, Bread, Burger, Pizza, Snacks, Beverages)
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesName = item.name.toLowerCase().includes(q);
-        const matchesDesc = item.description?.toLowerCase().includes(q);
-        const matchesCat = item.categoryName?.toLowerCase().includes(q);
-        if (!matchesName && !matchesDesc && !matchesCat) return false;
+        const q = searchQuery.toLowerCase().trim();
+        const inName = item.name.toLowerCase().includes(q);
+        const inCat = item.categoryName?.toLowerCase().includes(q);
+        const inDesc = item.description?.toLowerCase().includes(q);
+        if (!inName && !inCat && !inDesc) {
+          return false;
+        }
       }
+
       return true;
     });
-  }, [foodItems, selectedCategory, vegOnly, searchQuery]);
+  }, [foodItems, selectedCategory, searchQuery, readyToServeFilter]);
 
   return (
-    <section id="menu" className="py-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      {/* Section Header */}
-      <div className="text-center max-w-2xl mx-auto mb-8">
-        <span className="text-xs uppercase tracking-widest font-bold text-gold-600 block mb-1">
-          Handcrafted & Freshly Sourced
-        </span>
-        <h2 className="font-serif text-3xl sm:text-4xl font-bold text-coffee-950">
-          The Aradhana Menu
+    <section id="menu" className="py-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      {/* Menu Title */}
+      <div className="text-center max-w-xl mx-auto space-y-1">
+        <h2 className="font-serif text-2xl sm:text-3xl font-bold text-coffee-950">
+          Our Food Menu
         </h2>
-        <p className="text-sm text-coffee-600 mt-2">
-          From fragrant filter roasts to wood-fired delicacies, choose your favorites and order directly to your table.
+        <p className="text-xs sm:text-sm text-coffee-600">
+          Select your dishes and add them to your cart.
         </p>
       </div>
 
-      {/* Search Bar & Veg Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 bg-white p-3 rounded-2xl border border-cream-300 shadow-sm">
-        {/* Search Input */}
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-coffee-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search coffee, breakfast, toast..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-cream-50 border border-cream-200 text-sm text-coffee-900 placeholder-coffee-400 focus:outline-none focus:ring-2 focus:ring-gold-500/50"
-          />
-        </div>
-
-        {/* Filters */}
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-          {/* Veg Only Toggle */}
+      {/* Ready-to-Serve Active Filter Notice Banner (if active) */}
+      {readyToServeFilter && (
+        <div className="flex items-center justify-between p-3.5 px-4 rounded-2xl bg-amber-50 border border-amber-300 text-xs sm:text-sm text-amber-950 shadow-xs animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 fill-amber-600 text-amber-600" />
+            <span className="font-semibold">Showing Ready-to-Serve Food (Instant Service)</span>
+          </div>
           <button
-            onClick={() => setVegOnly(!vegOnly)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-              vegOnly
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-sm'
-                : 'bg-cream-100 text-coffee-700 border-cream-300 hover:bg-cream-200'
-            }`}
+            onClick={onClearReadyToServe}
+            className="flex items-center gap-1 text-xs font-bold text-amber-800 hover:text-amber-950 underline"
           >
-            <div className={`w-3.5 h-3.5 rounded-full border border-emerald-700 flex items-center justify-center ${vegOnly ? 'bg-emerald-600' : ''}`}>
-              {vegOnly && <Check className="w-2.5 h-2.5 text-white" />}
-            </div>
-            <span>Pure Veg Only</span>
+            <span>Show Full Menu</span>
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
+      )}
+
+      {/* Search Input Bar */}
+      <div className="relative max-w-md mx-auto">
+        <Search className="w-4 h-4 text-coffee-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search Tea, Coffee, Rice, Roti, Bread, Burger, Pizza..."
+          className="w-full pl-9 pr-4 py-2.5 rounded-full bg-white border border-cream-300 text-sm text-coffee-950 placeholder-coffee-400 focus:outline-none focus:ring-2 focus:ring-gold-500/50 shadow-xs"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-coffee-400 hover:text-coffee-700"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* Horizontal Category Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-4 no-scrollbar mb-8">
+      {/* Category Pills (Horizontal Scroll) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar justify-start sm:justify-center">
         <button
           onClick={() => setSelectedCategory('all')}
-          className={`shrink-0 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shadow-sm ${
+          className={`shrink-0 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shadow-xs ${
             selectedCategory === 'all'
               ? 'bg-coffee-900 text-cream-50 shadow-md border border-gold-500/30'
               : 'bg-white text-coffee-800 hover:bg-cream-200 border border-cream-300'
@@ -127,7 +136,7 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
             <button
               key={cat.id}
               onClick={() => setSelectedCategory(cat.id)}
-              className={`shrink-0 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shadow-sm ${
+              className={`shrink-0 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shadow-xs ${
                 selectedCategory === cat.id
                   ? 'bg-coffee-900 text-cream-50 shadow-md border border-gold-500/30'
                   : 'bg-white text-coffee-800 hover:bg-cream-200 border border-cream-300'
@@ -141,32 +150,31 @@ export const MenuSection: React.FC<MenuSectionProps> = ({
 
       {/* Food Cards Grid */}
       {filteredItems.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 pt-2">
           {filteredItems.map((item) => (
             <FoodCard
               key={item.id}
               item={item}
               quantityInCart={cartQuantities[item.id] || 0}
-              onOpenDetail={onOpenDetail}
             />
           ))}
         </div>
       ) : (
-        <div className="text-center py-16 bg-white rounded-3xl border border-cream-300 p-8">
-          <div className="w-12 h-12 rounded-full bg-cream-200 flex items-center justify-center text-coffee-500 mx-auto mb-3">
+        <div className="text-center py-16 bg-white rounded-3xl border border-cream-300 p-8 space-y-3">
+          <div className="w-12 h-12 rounded-full bg-cream-100 flex items-center justify-center text-coffee-500 mx-auto">
             <Search className="w-6 h-6" />
           </div>
-          <h3 className="font-serif text-lg font-bold text-coffee-950">No dishes match your criteria</h3>
-          <p className="text-xs text-coffee-600 mt-1 max-w-sm mx-auto">
-            Try adjusting your search keywords or toggle off the pure veg filter to see all dishes.
+          <h3 className="font-serif text-lg font-bold text-coffee-950">No food items found</h3>
+          <p className="text-xs text-coffee-600 max-w-sm mx-auto">
+            No dishes match "{searchQuery}". Try searching for Tea, Coffee, Rice, Roti, Bread, Burger, Pizza, or Snacks.
           </p>
           <button
             onClick={() => {
               setSearchQuery('');
               setSelectedCategory('all');
-              setVegOnly(false);
+              if (readyToServeFilter) onClearReadyToServe();
             }}
-            className="mt-4 px-4 py-2 rounded-full bg-coffee-900 text-cream-50 text-xs font-semibold"
+            className="px-4 py-2 rounded-full bg-coffee-900 text-cream-50 text-xs font-semibold shadow-xs"
           >
             Reset Filters
           </button>

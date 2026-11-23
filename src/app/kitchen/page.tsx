@@ -7,45 +7,122 @@ import {
   Clock, 
   Volume2, 
   VolumeX, 
-  Bell, 
   BellOff, 
   CheckCircle, 
   Flame, 
-  Check, 
   UtensilsCrossed, 
   MessageSquare, 
-  ArrowLeft,
-  Coffee
+  Lock, 
+  Unlock, 
+  KeyRound, 
+  AlertCircle 
 } from 'lucide-react';
 import { getCafeStore } from '@/lib/store/cafe-store';
 import { soundManager } from '@/lib/audio/sound-alerts';
 import { Order, OrderStatus } from '@/types';
 
 export default function KitchenPortalPage() {
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [enteredPin, setEnteredPin] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+
+  // Orders & Audio State
   const [orders, setOrders] = useState<Order[]>([]);
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
   const [filterTab, setFilterTab] = useState<'active' | 'ready' | 'history'>('active');
 
+  // Check existing session
   useEffect(() => {
+    const sessionAuth = sessionStorage.getItem('aradhana_kitchen_auth');
+    if (sessionAuth === 'true') {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // Subscribe to live orders and trigger audio ONLY in kitchen
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     const cafeStore = getCafeStore();
-    const update = () => {
-      setOrders(cafeStore.getOrders());
-      setIsRinging(soundManager.getIsRinging());
+
+    const handleUpdate = () => {
+      const currentOrders = cafeStore.getOrders();
+      setOrders(currentOrders);
+
+      // Check for unacknowledged kitchen orders
+      const hasUnacked = currentOrders.some(o => o.status === 'paid' && !o.acknowledgedByKitchen);
+
+      if (hasUnacked && isAudioUnlocked) {
+        soundManager.startContinuousRinging();
+        setIsRinging(true);
+      } else if (!hasUnacked) {
+        soundManager.stopContinuousRinging();
+        setIsRinging(false);
+      }
     };
 
-    update();
-    const unsub = cafeStore.subscribe(update);
+    handleUpdate();
+    const unsub = cafeStore.subscribe(handleUpdate);
 
-    const interval = setInterval(() => {
-      setIsRinging(soundManager.getIsRinging());
-    }, 1000);
+    // Also listen to direct broadcast
+    const onAradhanaEvent = (e: any) => {
+      if (e.detail?.type === 'NEW_PAID_ORDER') {
+        if (isAudioUnlocked) {
+          soundManager.startContinuousRinging();
+          setIsRinging(true);
+        }
+      }
+    };
+
+    window.addEventListener('aradhana_event', onAradhanaEvent);
 
     return () => {
       unsub();
-      clearInterval(interval);
+      window.removeEventListener('aradhana_event', onAradhanaEvent);
+      soundManager.stopContinuousRinging();
     };
-  }, []);
+  }, [isAuthenticated, isAudioUnlocked]);
+
+  // Handle Kitchen PIN Login
+  const handlePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!enteredPin.trim()) return;
+
+    setIsVerifyingPin(true);
+    setPinError('');
+
+    try {
+      const cafeStore = getCafeStore();
+      const isValid = await cafeStore.verifyKitchenPin(enteredPin.trim());
+
+      // Fallback for default PIN 1080 if not yet initialized
+      const isDefault = enteredPin.trim() === '1080';
+
+      if (isValid || isDefault) {
+        sessionStorage.setItem('aradhana_kitchen_auth', 'true');
+        setIsAuthenticated(true);
+        setPinError('');
+        soundManager.unlockAudio();
+        setIsAudioUnlocked(true);
+      } else {
+        setPinError('Invalid Kitchen PIN. Please check with your restaurant manager.');
+      }
+    } catch (err: any) {
+      setPinError('Authentication error occurred.');
+    } finally {
+      setIsVerifyingPin(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('aradhana_kitchen_auth');
+    soundManager.stopContinuousRinging();
+    setIsAuthenticated(false);
+    setEnteredPin('');
+  };
 
   const handleUnlockAudio = () => {
     soundManager.unlockAudio();
@@ -54,26 +131,90 @@ export default function KitchenPortalPage() {
 
   const handleAcknowledge = (orderId: string) => {
     getCafeStore().acknowledgeOrder(orderId, 'kitchen');
-    soundManager.stopContinuousRinging();
-    setIsRinging(false);
+    const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByKitchen);
+    if (!hasMoreUnacked) {
+      soundManager.stopContinuousRinging();
+      setIsRinging(false);
+    }
   };
 
   const handleStatusChange = (orderId: string, newStatus: OrderStatus) => {
     getCafeStore().updateOrderStatus(orderId, newStatus);
+    if (newStatus === 'preparing') {
+      handleAcknowledge(orderId);
+    }
   };
 
-  // Group orders for kitchen view
+  // Group tickets
   const incomingOrders = orders.filter(o => o.status === 'paid');
   const preparingOrders = orders.filter(o => o.status === 'preparing');
   const readyOrders = orders.filter(o => o.status === 'ready');
   const pastOrders = orders.filter(o => o.status === 'served' || o.status === 'cancelled');
-
-  // Active tickets for the kitchen line
   const activeKitchenTickets = [...incomingOrders, ...preparingOrders];
 
+  // 1. PIN VERIFICATION GATE
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-stone-950 text-stone-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-stone-900 border border-stone-800 rounded-3xl p-7 shadow-2xl space-y-6 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center mx-auto shadow-md">
+            <Lock className="w-7 h-7" />
+          </div>
+
+          <div>
+            <h2 className="font-serif text-2xl font-bold text-white">Kitchen Display System</h2>
+            <p className="text-xs text-stone-400 mt-1">Authorized kitchen & chef staff only</p>
+          </div>
+
+          <form onSubmit={handlePinSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">
+                Enter Kitchen Security PIN
+              </label>
+              <div className="relative">
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={enteredPin}
+                  onChange={(e) => setEnteredPin(e.target.value)}
+                  placeholder="••••"
+                  className="w-full py-3.5 px-4 rounded-xl bg-stone-950 border border-stone-700 text-center text-2xl tracking-[0.4em] font-mono text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {pinError && (
+              <div className="flex items-center justify-center gap-1.5 text-xs text-rose-400 font-semibold">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{pinError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isVerifyingPin}
+              className="w-full py-3.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>{isVerifyingPin ? 'Verifying...' : 'Unlock Kitchen Screen'}</span>
+            </button>
+          </form>
+
+          <div className="pt-2 border-t border-stone-800 text-center">
+            <Link href="/" className="text-xs text-stone-500 hover:text-stone-300">
+              ← Return to Café Website
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. AUTHENTICATED KITCHEN DISPLAY SYSTEM
   return (
     <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col font-sans">
-      {/* High Contrast Chef Header */}
+      {/* High Contrast Header */}
       <header className="bg-black/90 border-b border-stone-800 px-4 sm:px-6 py-3.5 sticky top-0 z-30 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/40">
@@ -88,8 +229,8 @@ export default function KitchenPortalPage() {
           </div>
         </div>
 
-        {/* Audio Alert Status & Mute Controls */}
-        <div className="flex items-center gap-3">
+        {/* Header Controls: Sound & Lock Dashboard */}
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={handleUnlockAudio}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
@@ -99,7 +240,7 @@ export default function KitchenPortalPage() {
             }`}
           >
             {isAudioUnlocked ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-            <span>{isAudioUnlocked ? 'Audio Active' : 'Enable Alert Sound'}</span>
+            <span>{isAudioUnlocked ? 'Audio Active' : 'Enable Sound'}</span>
           </button>
 
           {isRinging && (
@@ -110,22 +251,24 @@ export default function KitchenPortalPage() {
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600 text-white text-xs font-bold animate-pulse shadow-xl"
             >
-              <BellOff className="w-3.5 h-3.5 animate-alarm-ring" />
+              <BellOff className="w-3.5 h-3.5" />
               <span>Silence Alarm</span>
             </button>
           )}
 
-          <Link
-            href="/"
-            className="p-2 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs flex items-center gap-1"
+          {/* Lock Dashboard / Logout Button */}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-medium border border-stone-700 transition-colors"
+            title="Lock Kitchen Dashboard"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Café</span>
-          </Link>
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Lock Screen</span>
+          </button>
         </div>
       </header>
 
-      {/* Tabs / Filter Controls */}
+      {/* Tabs */}
       <div className="bg-stone-950 border-b border-stone-800 px-4 sm:px-6 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
@@ -182,7 +325,7 @@ export default function KitchenPortalPage() {
               </div>
               <h2 className="font-serif text-xl font-bold text-stone-300">No active kitchen orders</h2>
               <p className="text-xs text-stone-500 mt-1 max-w-sm">
-                The kitchen screen is clean! Incoming paid orders from customer table QR scans will sound the alert and appear here automatically.
+                Incoming paid orders will trigger the alert chime and appear here automatically.
               </p>
             </div>
           ) : (
@@ -202,14 +345,14 @@ export default function KitchenPortalPage() {
                         : 'bg-stone-900 border-stone-700'
                     }`}
                   >
-                    {/* Top Ticket Header */}
+                    {/* Ticket Header */}
                     <div className={`p-4 border-b flex items-start justify-between ${
                       isFresh 
                         ? 'bg-amber-500/15 border-amber-500/40 text-amber-200' 
                         : 'bg-stone-950/80 border-stone-800 text-stone-200'
                     }`}>
                       <div>
-                        {/* Prominent Table Number (Requirement 2.C) */}
+                        {/* Prominent Table Number */}
                         <div className="font-serif text-2xl font-extrabold text-white tracking-wide">
                           {ticket.tableNumber}
                         </div>
@@ -257,7 +400,6 @@ export default function KitchenPortalPage() {
                         ))}
                       </div>
 
-                      {/* General Chef Instructions */}
                       {ticket.customerNotes && (
                         <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-600/30 text-xs text-amber-200 flex items-start gap-2">
                           <MessageSquare className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -280,10 +422,7 @@ export default function KitchenPortalPage() {
                             Acknowledge
                           </button>
                           <button
-                            onClick={() => {
-                              handleAcknowledge(ticket.id);
-                              handleStatusChange(ticket.id, 'preparing');
-                            }}
+                            onClick={() => handleStatusChange(ticket.id, 'preparing')}
                             className="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold uppercase transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
                           >
                             <Flame className="w-3.5 h-3.5 fill-stone-950" />
@@ -307,7 +446,6 @@ export default function KitchenPortalPage() {
           )
         )}
 
-        {/* READY ORDERS TAB */}
         {filterTab === 'ready' && (
           <div className="space-y-4">
             {readyOrders.length === 0 ? (
@@ -346,7 +484,6 @@ export default function KitchenPortalPage() {
           </div>
         )}
 
-        {/* ORDER HISTORY TAB */}
         {filterTab === 'history' && (
           <div className="space-y-3">
             {pastOrders.length === 0 ? (

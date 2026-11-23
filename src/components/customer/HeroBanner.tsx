@@ -1,114 +1,88 @@
 'use client';
 
 import React from 'react';
-import { Sparkles, QrCode, ArrowDown, Clock, MapPin, Coffee } from 'lucide-react';
+import { ArrowDown, Clock, MapPin, Zap } from 'lucide-react';
 
 interface HeroBannerProps {
-  activeTable: string;
-  onOpenTableSelector: () => void;
-  bannerText?: string;
+  onExploreReadyToServe: () => void;
 }
 
-export const HeroBanner: React.FC<HeroBannerProps> = ({
-  activeTable,
-  onOpenTableSelector,
-  bannerText,
-}) => {
+export const HeroBanner: React.FC<HeroBannerProps> = ({ onExploreReadyToServe }) => {
   return (
-    <div className="relative overflow-hidden bg-gradient-to-b from-[#FAF6F0] via-[#F5EFEB] to-[#FAF7F2] pb-12 pt-6 sm:pt-10">
-      {/* Background Subtle Pattern & Blur orbs */}
-      <div className="absolute top-0 right-0 -mt-16 -mr-16 w-80 h-80 rounded-full bg-gold-200/40 blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-0 -mb-16 -ml-16 w-80 h-80 rounded-full bg-coffee-200/30 blur-3xl pointer-events-none" />
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        {/* Top Announcement Bar */}
-        {bannerText && (
-          <div className="mb-6 flex justify-center">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gold-500/10 border border-gold-500/25 text-coffee-900 text-xs sm:text-sm font-medium shadow-sm animate-fade-in">
-              <Sparkles className="w-3.5 h-3.5 text-gold-600 shrink-0" />
-              <span>{bannerText}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Hero Grid */}
+    <div className="relative overflow-hidden bg-gradient-to-b from-[#FAF6F0] via-[#F5EFEB] to-[#FAF7F2] pt-8 pb-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 space-y-8">
+        
+        {/* SECTION 1: WELCOME HERO & SECTION 5: CAFÉ IMAGE (CLEAN GRID) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          {/* Left Text Column */}
-          <div className="lg:col-span-7 space-y-5 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-coffee-900 text-cream-100 text-xs tracking-wider uppercase font-semibold">
-              <Coffee className="w-3.5 h-3.5 text-gold-400" />
-              <span>Estate Grown Chikmagalur Beans & Artisan Roastery</span>
+          
+          {/* Left: Text & Information (Sections 1, 2, 3, 4, 6) */}
+          <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
+            
+            {/* Section 1: Welcome Heading & Description */}
+            <div className="space-y-3">
+              <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-coffee-950 leading-[1.15] tracking-tight">
+                Welcome to <span className="text-gold-600">Aradhana Café</span>
+              </h1>
+
+              <p className="text-base sm:text-lg text-coffee-700/90 max-w-xl mx-auto lg:mx-0 leading-relaxed font-normal">
+                A sanctuary of handcrafted Mysore filter roasts, heritage recipes, and gourmet delicacies, prepared fresh with warmth and artisanal care.
+              </p>
             </div>
 
-            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-coffee-950 leading-[1.15] tracking-tight">
-              A Symphony of <span className="text-gold-600 italic">Heritage Roast</span> & Fine Taste.
-            </h1>
-
-            <p className="text-sm sm:text-lg text-coffee-700/90 max-w-xl mx-auto lg:mx-0 leading-relaxed font-normal">
-              Welcome to <span className="font-semibold text-coffee-950">Aradhana Café</span>. Browse our artisanal menu, order directly from your table, and pay seamlessly via UPI.
-            </p>
-
-            {/* Table QR Card & Call to Action */}
-            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
-              <div className="flex items-center gap-3 p-2.5 px-4 rounded-2xl bg-white border border-coffee-200/80 shadow-sm">
-                <div className="w-10 h-10 rounded-xl bg-gold-500/15 flex items-center justify-center text-gold-600">
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div className="text-left">
-                  <p className="text-[11px] text-coffee-500 font-medium uppercase tracking-wider">Your Table</p>
-                  <p className="text-sm font-bold text-coffee-950">{activeTable}</p>
-                </div>
-                <button
-                  onClick={onOpenTableSelector}
-                  className="ml-2 text-xs text-gold-700 hover:text-gold-800 font-semibold underline underline-offset-2"
-                >
-                  Change
-                </button>
-              </div>
-
+            {/* Section 2: Main CTA Button & Section 6: Ready-to-Serve Button */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3.5">
+              {/* Section 2: Main CTA Button */}
               <a
                 href="#menu"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-coffee-900 hover:bg-coffee-800 text-cream-50 text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-95 border border-gold-500/30"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full bg-coffee-900 hover:bg-coffee-800 text-cream-50 text-sm font-semibold transition-all shadow-md hover:shadow-lg active:scale-95 border border-gold-500/30"
               >
-                <span>Explore Menu & Order</span>
+                <span>Explore Menu & Order Your Food</span>
                 <ArrowDown className="w-4 h-4 text-gold-400 animate-bounce" />
               </a>
+
+              {/* Section 6: Instant Food / Ready-to-Serve Button */}
+              <button
+                onClick={onExploreReadyToServe}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-amber-500 hover:bg-amber-400 text-coffee-950 text-sm font-bold transition-all shadow-md hover:shadow-lg active:scale-95 border border-amber-600/30"
+              >
+                <Zap className="w-4 h-4 fill-coffee-950" />
+                <span>Explore Ready-to-Serve Food</span>
+              </button>
             </div>
 
-            {/* Quick Highlights */}
-            <div className="pt-4 flex items-center justify-center lg:justify-start gap-6 text-xs text-coffee-600 font-medium">
-              <span className="flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-gold-600" /> Open: 7 AM – 11 PM
-              </span>
-              <span className="flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-gold-600" /> Indiranagar, Bengaluru
-              </span>
+            {/* Section 3 & 4: Opening Hours & Café Location */}
+            <div className="pt-3 border-t border-cream-300/80 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-6 text-xs sm:text-sm text-coffee-800 font-medium">
+              {/* Section 3: Opening Hours */}
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-gold-600 shrink-0" />
+                <span className="font-bold text-coffee-950">Open 7 AM to 11 PM</span>
+              </div>
+
+              {/* Section 4: Café Location */}
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-gold-600 shrink-0" />
+                <span className="text-coffee-700">108 Heritage Boulevard, 12th Main, Indiranagar, Bengaluru</span>
+              </div>
             </div>
+
           </div>
 
-          {/* Right Visual Image */}
-          <div className="lg:col-span-5 relative">
+          {/* Section 5: Café Image (High-Quality Photograph) */}
+          <div className="lg:col-span-5">
             <div className="relative mx-auto max-w-sm sm:max-w-md lg:max-w-none">
-              <div className="absolute inset-0 bg-gold-500/20 rounded-3xl transform rotate-3 scale-95 filter blur-xl"></div>
-              <div className="relative rounded-3xl overflow-hidden border-4 border-white shadow-2xl bg-coffee-900">
+              <div className="absolute inset-0 bg-gold-500/15 rounded-3xl transform rotate-2 scale-95 filter blur-lg"></div>
+              <div className="relative rounded-3xl overflow-hidden border-4 border-white shadow-xl bg-coffee-950">
                 <img
                   src="https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=1000&q=80"
-                  alt="Aradhana Cafe Signature Coffee Experience"
-                  className="w-full h-72 sm:h-80 object-cover object-center"
+                  alt="Aradhana Café Ambiance & Artisanal Brew"
+                  className="w-full h-64 sm:h-80 object-cover object-center"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-coffee-950/80 via-transparent to-transparent flex items-end p-5">
-                  <div className="text-white">
-                    <span className="px-2.5 py-0.5 rounded-full bg-gold-500 text-coffee-950 text-[10px] font-bold tracking-wider uppercase">
-                      CHEF'S SIGNATURE
-                    </span>
-                    <h3 className="font-serif text-lg font-semibold mt-1">Mysore Gold Brass Filter Brew</h3>
-                    <p className="text-xs text-cream-200/90 mt-0.5">Slow-dripped with creamy frothed A2 dairy.</p>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
+
         </div>
+
       </div>
     </div>
   );

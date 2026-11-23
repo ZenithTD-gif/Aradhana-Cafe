@@ -2,18 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { ShoppingBag, Coffee, MapPin, ChefHat, Shield, QrCode } from 'lucide-react';
+import { ShoppingBag, Coffee, ChefHat, Shield, QrCode } from 'lucide-react';
 import { getCartStore } from '@/lib/store/cart-store';
 import { getCafeStore } from '@/lib/store/cafe-store';
 
 interface NavbarProps {
   onOpenCart?: () => void;
-  onOpenTableSelector?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenCart, onOpenTableSelector }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onOpenCart }) => {
   const [cartCount, setCartCount] = useState(0);
-  const [activeTable, setActiveTable] = useState('Table 1');
+  const [activeTable, setActiveTable] = useState('');
+  const [isQRIdentified, setIsQRIdentified] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -23,6 +23,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCart, onOpenTableSelector 
     const update = () => {
       setCartCount(cartStore.getItemCount());
       setActiveTable(cafeStore.getActiveTable());
+      setIsQRIdentified(cafeStore.getIsTableIdentifiedFromQR());
     };
 
     update();
@@ -53,7 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCart, onOpenTableSelector 
               <Coffee className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <span className="font-serif text-lg sm:text-2xl font-bold tracking-tight text-coffee-900 group-hover:text-coffee-700 transition-colors">
+              <span className="font-serif text-lg sm:text-2xl font-bold tracking-tight text-coffee-950 group-hover:text-coffee-700 transition-colors">
                 ARADHANA
               </span>
               <span className="block text-[10px] sm:text-xs uppercase tracking-widest text-gold-600 font-semibold -mt-1">
@@ -62,18 +63,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCart, onOpenTableSelector 
             </div>
           </Link>
 
-          {/* Center Table Indicator (Mobile & Desktop) */}
-          <div className="flex items-center gap-2 sm:gap-4">
-            <button
-              onClick={onOpenTableSelector}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cream-200/80 hover:bg-cream-300 text-coffee-900 text-xs sm:text-sm font-medium border border-coffee-200 transition-all shadow-sm active:scale-95"
-              title="Click to change or scan Table QR"
-            >
-              <QrCode className="w-3.5 h-3.5 text-gold-600" />
-              <span className="text-coffee-600 hidden xs:inline">Seated at:</span>
-              <span className="font-bold text-coffee-900">{activeTable}</span>
-            </button>
-          </div>
+          {/* Table indicator ONLY if identified through a table QR scan */}
+          {isQRIdentified && activeTable && (
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-300 shadow-xs">
+              <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+              <span>QR Verified:</span>
+              <strong className="text-emerald-950">{activeTable}</strong>
+            </div>
+          )}
 
           {/* Right Action Icons & Portal Shortcuts */}
           <div className="flex items-center gap-2 sm:gap-3">
@@ -90,7 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCart, onOpenTableSelector 
               <Link
                 href="/kitchen"
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-coffee-700 hover:text-coffee-950 hover:bg-cream-200 transition-colors"
-                title="Kitchen Display System"
+                title="Kitchen Display System (KDS)"
               >
                 <ChefHat className="w-3.5 h-3.5 text-coffee-600" />
                 <span>Kitchen</span>

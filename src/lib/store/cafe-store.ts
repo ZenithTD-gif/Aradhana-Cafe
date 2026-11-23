@@ -15,28 +15,30 @@ import {
   INITIAL_SETTINGS, 
   INITIAL_TABLES 
 } from '../data/seed-menu';
-import { soundManager } from '../audio/sound-alerts';
+import { hashPin, verifyPin } from '../security/auth';
 
 const STORAGE_KEYS = {
-  SETTINGS: 'aradhana_settings_v1',
-  CATEGORIES: 'aradhana_categories_v1',
-  FOOD_ITEMS: 'aradhana_food_items_v1',
-  TABLES: 'aradhana_tables_v1',
-  ORDERS: 'aradhana_orders_v1',
-  COUPONS: 'aradhana_coupons_v1',
-  ACTIVE_TABLE: 'aradhana_active_table',
+  SETTINGS: 'aradhana_settings_v2',
+  CATEGORIES: 'aradhana_categories_v2',
+  FOOD_ITEMS: 'aradhana_food_items_v2',
+  TABLES: 'aradhana_tables_v2',
+  ORDERS: 'aradhana_orders_v2',
+  COUPONS: 'aradhana_coupons_v2',
+  ACTIVE_TABLE: 'aradhana_active_table_v2',
+  KITCHEN_PIN_HASH: 'aradhana_kitchen_pin_hash_v2',
 };
 
 // BroadcastChannel for cross-tab instantaneous real-time sync
-type EventType = 
+export type EventType = 
   | 'NEW_PAID_ORDER' 
   | 'ORDER_STATUS_CHANGED' 
   | 'ORDER_ACKNOWLEDGED' 
   | 'MENU_UPDATED' 
   | 'AVAILABILITY_CHANGED'
-  | 'COUPON_REDEEMED';
+  | 'COUPON_REDEEMED'
+  | 'KITCHEN_PIN_CHANGED';
 
-interface RealtimeMessage {
+export interface RealtimeMessage {
   type: EventType;
   payload: any;
   timestamp: number;
@@ -61,12 +63,15 @@ export class CafeStore {
   private tables: TableItem[] = INITIAL_TABLES;
   private orders: Order[] = [];
   private coupons: Coupon[] = [];
-  private activeTable: string = 'Table 1';
+  private activeTable: string = ''; // Empty by default; set ONLY by QR scan or during checkout
+  private isTableIdentifiedFromQR: boolean = false;
+  private kitchenPinHash: string = '';
 
   private constructor() {
     if (typeof window !== 'undefined') {
       this.loadFromStorage();
       this.setupBroadcastListener();
+      this.initDefaultKitchenPin();
       window.addEventListener('storage', () => {
         this.loadFromStorage();
         this.notifyListeners();
@@ -90,7 +95,7 @@ export class CafeStore {
     this.listeners.forEach((fn) => fn());
   }
 
-  private broadcast(type: EventType, payload: any) {
+  public broadcast(type: EventType, payload: any) {
     if (typeof window !== 'undefined') {
       const msg: RealtimeMessage = { type, payload, timestamp: Date.now() };
       if (broadcastChannel) {
@@ -101,23 +106,23 @@ export class CafeStore {
     }
   }
 
+  private async initDefaultKitchenPin() {
+    if (!this.kitchenPinHash) {
+      const defaultPin = process.env.NEXT_PUBLIC_KITCHEN_PIN || '1080';
+      this.kitchenPinHash = await hashPin(defaultPin);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEYS.KITCHEN_PIN_HASH, this.kitchenPinHash);
+      }
+    }
+  }
+
   private setupBroadcastListener() {
     if (typeof window === 'undefined') return;
 
     const handleMessage = (msg: RealtimeMessage) => {
       this.loadFromStorage();
       this.notifyListeners();
-
-      if (msg.type === 'NEW_PAID_ORDER') {
-        // Trigger continuous ringing sound if audio unlocked
-        soundManager.startContinuousRinging();
-      } else if (msg.type === 'ORDER_ACKNOWLEDGED') {
-        // Stop ringing sound if all unacknowledged orders are cleared
-        const hasUnacked = this.orders.some(o => o.status === 'paid' && !o.acknowledgedByAdmin);
-        if (!hasUnacked) {
-          soundManager.stopContinuousRinging();
-        }
-      }
+      // NOTE: Zero audio calls here. Audio is handled strictly in Admin and Kitchen views!
     };
 
     if (broadcastChannel) {
@@ -151,6 +156,9 @@ export class CafeStore {
 
       const savedActiveTable = localStorage.getItem(STORAGE_KEYS.ACTIVE_TABLE);
       if (savedActiveTable) this.activeTable = savedActiveTable;
+
+      const savedPinHash = localStorage.getItem(STORAGE_KEYS.KITCHEN_PIN_HASH);
+      if (savedPinHash) this.kitchenPinHash = savedPinHash;
     } catch (e) {
       console.error('Failed to load cafe data from localStorage', e);
     }
@@ -165,6 +173,9 @@ export class CafeStore {
       localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(this.orders));
       localStorage.setItem(STORAGE_KEYS.COUPONS, JSON.stringify(this.coupons));
       localStorage.setItem(STORAGE_KEYS.ACTIVE_TABLE, this.activeTable);
+      if (this.kitchenPinHash) {
+        localStorage.setItem(STORAGE_KEYS.KITCHEN_PIN_HASH, this.kitchenPinHash);
+      }
     } catch (e) {
       console.error('Failed to save cafe data to localStorage', e);
     }
@@ -183,11 +194,15 @@ export class CafeStore {
     return [...this.foodItems];
   }
 
-  /**
-   * Returns only items that are marked available (for customer ordering portal)
-   */
   public getAvailableFoodItems(): FoodItem[] {
     return this.foodItems.filter(item => item.isAvailable);
+  }
+
+  /**
+   * Ready-to-Serve filter: only items currently available AND quick to serve (<= 5 mins prep)
+   */
+  public getReadyToServeItems(): FoodItem[] {
+    return this.foodItems.filter(item => item.isAvailable && (item.preparationTimeMins || 5) <= 5);
   }
 
   public getTables(): TableItem[] {
@@ -196,6 +211,10 @@ export class CafeStore {
 
   public getActiveTable(): string {
     return this.activeTable;
+  }
+
+  public getIsTableIdentifiedFromQR(): boolean {
+    return this.isTableIdentifiedFromQR;
   }
 
   public getOrders(): Order[] {
@@ -210,21 +229,32 @@ export class CafeStore {
     return [...this.coupons];
   }
 
-  // --- ACTIONS ---
-
-  public setActiveTable(table: string) {
+  // --- TABLE ACTIONS ---
+  public setActiveTable(table: string, fromQR: boolean = false) {
     this.activeTable = table;
+    this.isTableIdentifiedFromQR = fromQR;
     localStorage.setItem(STORAGE_KEYS.ACTIVE_TABLE, table);
     this.notifyListeners();
   }
 
-  public updateSettings(newSettings: Partial<RestaurantSettings>) {
-    this.settings = { ...this.settings, ...newSettings };
+  // --- KITCHEN PIN MANAGEMENT ---
+  public async setKitchenPin(newPin: string): Promise<boolean> {
+    if (!newPin || newPin.trim().length < 4) return false;
+    this.kitchenPinHash = await hashPin(newPin.trim());
     this.saveToStorage();
+    this.broadcast('KITCHEN_PIN_CHANGED', { updated: true });
     this.notifyListeners();
+    return true;
   }
 
-  // CRITICAL REQUIREMENT: Real-time Food Availability Toggle
+  public async verifyKitchenPin(enteredPin: string): Promise<boolean> {
+    if (!this.kitchenPinHash) {
+      await this.initDefaultKitchenPin();
+    }
+    return verifyPin(enteredPin, this.kitchenPinHash);
+  }
+
+  // --- MENU ACTIONS ---
   public toggleFoodAvailability(itemId: string, forcedStatus?: boolean): boolean {
     const item = this.foodItems.find(i => i.id === itemId);
     if (!item) return false;
@@ -264,8 +294,8 @@ export class CafeStore {
         isVeg: item.isVeg !== undefined ? item.isVeg : true,
         isSpicy: item.isSpicy || false,
         isChefSpecial: item.isChefSpecial || false,
-        preparationTimeMins: item.preparationTimeMins || 15,
-        calories: item.calories || 250,
+        preparationTimeMins: item.preparationTimeMins || 5,
+        calories: item.calories || 200,
       };
       this.foodItems.unshift(newItem);
       this.saveToStorage();
@@ -287,38 +317,6 @@ export class CafeStore {
     return false;
   }
 
-  public saveCategory(category: Partial<Category> & { name: string }): Category {
-    const existingIndex = this.categories.findIndex(c => c.id === category.id);
-    if (existingIndex >= 0) {
-      this.categories[existingIndex] = { ...this.categories[existingIndex], ...category };
-      this.saveToStorage();
-      this.notifyListeners();
-      return this.categories[existingIndex];
-    } else {
-      const newCat: Category = {
-        id: `cat-${Date.now()}`,
-        name: category.name,
-        slug: category.slug || category.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-        description: category.description || '',
-        imageUrl: category.imageUrl || '',
-        displayOrder: this.categories.length + 1,
-        isActive: true,
-      };
-      this.categories.push(newCat);
-      this.saveToStorage();
-      this.notifyListeners();
-      return newCat;
-    }
-  }
-
-  public deleteCategory(categoryId: string): boolean {
-    this.categories = this.categories.filter(c => c.id !== categoryId);
-    this.saveToStorage();
-    this.notifyListeners();
-    return true;
-  }
-
-  // --- TABLE MANAGEMENT ---
   public addTable(tableNumber: string, capacity: number = 4, section: string = 'Main Dining'): TableItem {
     const newTbl: TableItem = {
       id: `tbl-${Date.now()}`,
@@ -341,10 +339,7 @@ export class CafeStore {
     return true;
   }
 
-  // --- ORDER LIFECYCLE & VERIFICATION ---
-  /**
-   * Creates a confirmed paid order after successful payment verification
-   */
+  // --- ORDER LIFECYCLE ---
   public createPaidOrder(params: {
     tableNumber: string;
     items: {
@@ -362,8 +357,6 @@ export class CafeStore {
     paymentId: string;
   }): Order {
     const orderNum = `ARD-${new Date().getFullYear().toString().slice(-2)}${(Math.floor(1000 + Math.random() * 9000))}`;
-    
-    // Generate unique random coupon code: e.g. ARD-7942
     const couponCode = `ARD-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const subtotal = params.items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
@@ -405,7 +398,6 @@ export class CafeStore {
       updatedAt: new Date().toISOString(),
     };
 
-    // Create coupon record
     const newCoupon: Coupon = {
       id: `coupon-${Date.now()}`,
       couponCode,
@@ -423,7 +415,7 @@ export class CafeStore {
     this.saveToStorage();
     this.notifyListeners();
 
-    // Broadcast new paid order immediately to Admin & Kitchen
+    // Broadcast new paid order to Admin & Kitchen
     this.broadcast('NEW_PAID_ORDER', newOrder);
 
     return newOrder;
@@ -454,7 +446,7 @@ export class CafeStore {
     this.broadcast('ORDER_STATUS_CHANGED', { orderId, status });
   }
 
-  // --- COUPON VERIFICATION SYSTEM ---
+  // --- COUPON VERIFICATION ---
   public verifyCouponCode(code: string): { valid: boolean; coupon?: Coupon; order?: Order; message: string } {
     const cleanCode = code.trim().toUpperCase();
     const coupon = this.coupons.find(c => c.couponCode === cleanCode);
@@ -501,7 +493,6 @@ export class CafeStore {
     coupon.redeemedAt = new Date().toISOString();
     coupon.redeemedBy = redeemedBy;
 
-    // Update order as well
     const order = this.orders.find(o => o.id === coupon.orderId);
     if (order) {
       order.isCouponRedeemed = true;

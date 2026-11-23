@@ -8,28 +8,25 @@ import {
   CheckCircle, 
   Clock, 
   Coffee, 
-  DollarSign, 
   Edit3, 
   Eye, 
   EyeOff, 
   Plus, 
   QrCode, 
-  Search, 
   Shield, 
   ShoppingBag, 
   Trash2, 
   TrendingUp, 
-  Users, 
   Utensils, 
   Volume2, 
   VolumeX, 
   X, 
   Ticket, 
-  Check, 
   AlertTriangle,
   Download,
-  Settings,
-  Calendar
+  KeyRound,
+  Lock,
+  Check
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { getCafeStore } from '@/lib/store/cafe-store';
@@ -69,6 +66,10 @@ export default function AdminPortalPage() {
   const [newTableCapacity, setNewTableCapacity] = useState(4);
   const [newTableSection, setNewTableSection] = useState('Main Dining');
 
+  // Kitchen PIN Management
+  const [newKitchenPin, setNewKitchenPin] = useState('');
+  const [kitchenPinSuccess, setKitchenPinSuccess] = useState('');
+
   // Filter orders
   const [orderFilter, setOrderFilter] = useState<'all' | 'paid' | 'preparing' | 'ready' | 'served'>('all');
 
@@ -80,30 +81,52 @@ export default function AdminPortalPage() {
     }
   }, []);
 
-  // Subscribe to live cafe store
+  // Subscribe to live cafe store & trigger audio ONLY in Admin
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     const cafeStore = getCafeStore();
-    const update = () => {
-      setOrders(cafeStore.getOrders());
+    const handleUpdate = () => {
+      const currentOrders = cafeStore.getOrders();
+      setOrders(currentOrders);
       setFoodItems(cafeStore.getFoodItems());
       setCategories(cafeStore.getCategories());
       setTables(cafeStore.getTables());
       setSettings(cafeStore.getSettings());
-      setIsRinging(soundManager.getIsRinging());
+
+      // Check if unacknowledged admin orders exist
+      const hasUnacked = currentOrders.some(o => o.status === 'paid' && !o.acknowledgedByAdmin);
+
+      if (hasUnacked && isAudioUnlocked) {
+        soundManager.startContinuousRinging();
+        setIsRinging(true);
+      } else if (!hasUnacked) {
+        soundManager.stopContinuousRinging();
+        setIsRinging(false);
+      }
     };
 
-    update();
-    const unsub = cafeStore.subscribe(update);
+    handleUpdate();
+    const unsub = cafeStore.subscribe(handleUpdate);
 
-    const interval = setInterval(() => {
-      setIsRinging(soundManager.getIsRinging());
-    }, 1000);
+    // Direct broadcast listener for new orders
+    const onAradhanaEvent = (e: any) => {
+      if (e.detail?.type === 'NEW_PAID_ORDER') {
+        if (isAudioUnlocked) {
+          soundManager.startContinuousRinging();
+          setIsRinging(true);
+        }
+      }
+    };
+
+    window.addEventListener('aradhana_event', onAradhanaEvent);
 
     return () => {
       unsub();
-      clearInterval(interval);
+      window.removeEventListener('aradhana_event', onAradhanaEvent);
+      soundManager.stopContinuousRinging();
     };
-  }, []);
+  }, [isAuthenticated, isAudioUnlocked]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +135,6 @@ export default function AdminPortalPage() {
       setIsAuthenticated(true);
       sessionStorage.setItem('aradhana_admin_auth', 'true');
       setPinError('');
-      // Unlock audio on login click
       soundManager.unlockAudio();
       setIsAudioUnlocked(true);
     } else {
@@ -127,15 +149,18 @@ export default function AdminPortalPage() {
 
   const handleAcknowledge = (orderId: string) => {
     getCafeStore().acknowledgeOrder(orderId, 'admin');
-    soundManager.stopContinuousRinging();
-    setIsRinging(false);
+    const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByAdmin);
+    if (!hasMoreUnacked) {
+      soundManager.stopContinuousRinging();
+      setIsRinging(false);
+    }
   };
 
   const handleStatusChange = (orderId: string, status: OrderStatus) => {
     getCafeStore().updateOrderStatus(orderId, status);
   };
 
-  // CRITICAL REQUIREMENT: Real-Time Availability Switch
+  // Real-Time Availability Switch
   const handleToggleAvailability = (itemId: string) => {
     getCafeStore().toggleFoodAvailability(itemId);
   };
@@ -184,6 +209,22 @@ export default function AdminPortalPage() {
     setLookupResult(refreshed);
   };
 
+  // Update Kitchen Security PIN
+  const handleUpdateKitchenPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newKitchenPin.trim().length < 4) {
+      alert('PIN must be at least 4 digits.');
+      return;
+    }
+
+    const success = await getCafeStore().setKitchenPin(newKitchenPin.trim());
+    if (success) {
+      setKitchenPinSuccess(`Kitchen PIN updated successfully! The new PIN is now active.`);
+      setNewKitchenPin('');
+      setTimeout(() => setKitchenPinSuccess(''), 4000);
+    }
+  };
+
   // Summary Metrics
   const todayOrders = orders;
   const todayRevenue = orders
@@ -194,7 +235,6 @@ export default function AdminPortalPage() {
   const readyOrders = orders.filter(o => o.status === 'ready');
   const servedOrders = orders.filter(o => o.status === 'served');
 
-  // Filtered orders list
   const filteredOrders = orders.filter(o => {
     if (orderFilter === 'all') return true;
     return o.status === orderFilter;
@@ -223,7 +263,7 @@ export default function AdminPortalPage() {
                 maxLength={6}
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Enter 4-digit PIN (Demo: 1947)"
+                placeholder="Enter 4-digit PIN (Default: 1947)"
                 className="w-full py-3 px-4 rounded-xl bg-cream-50 border border-cream-300 text-center text-xl tracking-widest font-mono text-coffee-950 focus:outline-none focus:ring-2 focus:ring-gold-500/50"
                 autoFocus
               />
@@ -268,13 +308,12 @@ export default function AdminPortalPage() {
             </Link>
 
             <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-coffee-900 text-cream-300 text-xs border border-coffee-700">
-              Real-time Connected
+              Live Connected
             </span>
           </div>
 
-          {/* Right Header Alerts & Sound Unblocker */}
+          {/* Right Header Alerts & Sound Controls */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Audio Toggle Button */}
             <button
               onClick={handleUnlockAudio}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
@@ -288,7 +327,6 @@ export default function AdminPortalPage() {
               <span>{isAudioUnlocked ? 'Audio Active' : 'Enable Sound'}</span>
             </button>
 
-            {/* Continuous Ringing Stop Alert if Ringing */}
             {isRinging && (
               <button
                 onClick={() => {
@@ -297,7 +335,7 @@ export default function AdminPortalPage() {
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold animate-pulse shadow-lg"
               >
-                <BellOff className="w-3.5 h-3.5 animate-alarm-ring" />
+                <BellOff className="w-3.5 h-3.5" />
                 <span>Mute Alert</span>
               </button>
             )}
@@ -312,6 +350,7 @@ export default function AdminPortalPage() {
             <button
               onClick={() => {
                 sessionStorage.removeItem('aradhana_admin_auth');
+                soundManager.stopContinuousRinging();
                 setIsAuthenticated(false);
               }}
               className="px-2.5 py-1.5 rounded-lg text-cream-400 hover:text-white text-xs"
@@ -375,7 +414,7 @@ export default function AdminPortalPage() {
             }`}
           >
             <TrendingUp className="w-4 h-4" />
-            <span>Sales Reports</span>
+            <span>Sales & Settings</span>
           </button>
         </div>
       </header>
@@ -403,11 +442,11 @@ export default function AdminPortalPage() {
           </div>
 
           <div className="p-4 rounded-2xl bg-white border border-cream-300 shadow-sm">
-            <span className="text-[11px] font-bold text-rose-600 uppercase">New / Unacknowledged</span>
+            <span className="text-[11px] font-bold text-rose-600 uppercase">Unacknowledged</span>
             <div className="text-xl sm:text-2xl font-bold font-serif text-rose-600 mt-1">
               {pendingOrders.length}
             </div>
-            <span className="text-[10px] text-rose-500 block mt-1">Needs sound acknowledge</span>
+            <span className="text-[10px] text-rose-500 block mt-1">Requires ring acknowledgement</span>
           </div>
 
           <div className="p-4 rounded-2xl bg-white border border-cream-300 shadow-sm">
@@ -430,7 +469,6 @@ export default function AdminPortalPage() {
         {/* TAB 1: LIVE ORDERS MANAGEMENT */}
         {activeTab === 'orders' && (
           <div className="space-y-4">
-            {/* Sub-filters & Sound Indicator */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-cream-300 shadow-sm">
               <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
                 {(['all', 'paid', 'preparing', 'ready', 'served'] as const).map(tab => (
@@ -450,19 +488,18 @@ export default function AdminPortalPage() {
 
               {pendingOrders.length > 0 && (
                 <div className="flex items-center gap-2 text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 animate-pulse">
-                  <Bell className="w-4 h-4 animate-alarm-ring" />
-                  <span>{pendingOrders.length} New Paid Order(s) Requiring Attention!</span>
+                  <Bell className="w-4 h-4" />
+                  <span>{pendingOrders.length} New Paid Order(s) Ringing!</span>
                 </div>
               )}
             </div>
 
-            {/* Orders List */}
             {filteredOrders.length === 0 ? (
               <div className="text-center py-20 bg-white rounded-3xl border border-cream-300 p-8">
                 <ShoppingBag className="w-12 h-12 text-coffee-400 mx-auto mb-3" />
                 <h3 className="font-serif text-lg font-bold text-coffee-950">No orders found in this category</h3>
                 <p className="text-xs text-coffee-600 mt-1">
-                  When customers scan the table QR and complete UPI payment, new orders appear here instantly with ringing sound.
+                  Incoming verified paid orders appear here with ringing audio alert.
                 </p>
               </div>
             ) : (
@@ -607,21 +644,21 @@ export default function AdminPortalPage() {
           </div>
         )}
 
-        {/* TAB 2: FOOD MENU MANAGEMENT (CRITICAL REQUIREMENT 2.B.3) */}
+        {/* TAB 2: FOOD MENU MANAGEMENT */}
         {activeTab === 'menu' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-3xl border border-cream-300 shadow-sm">
               <div>
                 <h3 className="font-serif text-xl font-bold text-coffee-950">Food Menu & Real-time Availability</h3>
                 <p className="text-xs text-coffee-600 mt-0.5">
-                  Toggle availability OFF when an item is sold out today. It updates the customer portal in real time without redeploying.
+                  Toggle availability OFF when an item is sold out today. It immediately updates the customer menu in real time.
                 </p>
               </div>
 
               <button
                 onClick={() => {
                   setEditingItem({
-                    categoryId: categories[0]?.id || 'cat-coffee',
+                    categoryId: categories[0]?.id || 'cat-tea-coffee',
                     name: '',
                     price: 150,
                     description: '',
@@ -630,7 +667,7 @@ export default function AdminPortalPage() {
                     isVeg: true,
                     isChefSpecial: false,
                     isSpicy: false,
-                    preparationTimeMins: 10,
+                    preparationTimeMins: 5,
                   });
                   setIsEditModalOpen(true);
                 }}
@@ -669,7 +706,7 @@ export default function AdminPortalPage() {
 
                     {/* Controls */}
                     <div className="mt-2 pt-2 border-t border-cream-200 flex items-center justify-between">
-                      {/* CRITICAL AVAILABILITY SWITCH */}
+                      {/* Real-time Availability Switch */}
                       <button
                         onClick={() => handleToggleAvailability(item.id)}
                         className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${
@@ -726,7 +763,7 @@ export default function AdminPortalPage() {
               <div>
                 <h3 className="font-serif text-xl font-bold text-coffee-950">Table & QR Code Management</h3>
                 <p className="text-xs text-coffee-600 mt-0.5">
-                  Generate print-ready QR codes for each dining table. When customers scan, their table number is automatically identified.
+                  Generate print-ready QR codes for each dining table. Scanning automatically identifies the table for ordering.
                 </p>
               </div>
 
@@ -734,7 +771,7 @@ export default function AdminPortalPage() {
               <form onSubmit={handleAddTable} className="flex flex-wrap items-center gap-2">
                 <input
                   type="text"
-                  placeholder="e.g., Table 9"
+                  placeholder="e.g. Table 09"
                   value={newTableNumber}
                   onChange={(e) => setNewTableNumber(e.target.value)}
                   className="px-3 py-1.5 rounded-xl bg-cream-50 border border-cream-300 text-xs text-coffee-950 w-28 focus:outline-none focus:ring-1 focus:ring-gold-500"
@@ -755,7 +792,7 @@ export default function AdminPortalPage() {
               </form>
             </div>
 
-            {/* Tables Grid with Printable QR Codes */}
+            {/* Tables Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
               {tables.map(table => {
                 const qrUrl = typeof window !== 'undefined' 
@@ -772,7 +809,6 @@ export default function AdminPortalPage() {
                       <span>Cap: {table.capacity}</span>
                     </div>
 
-                    {/* QR Preview */}
                     <div className="p-3 bg-white rounded-2xl border-2 border-dashed border-gold-400 shadow-xs">
                       <QRCodeSVG
                         value={qrUrl}
@@ -814,7 +850,7 @@ export default function AdminPortalPage() {
           </div>
         )}
 
-        {/* TAB 4: COUPON VERIFICATION SYSTEM (CRITICAL REQUIREMENT 4) */}
+        {/* TAB 4: COUPON VERIFICATION SYSTEM */}
         {activeTab === 'coupons' && (
           <div className="max-w-xl mx-auto space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-cream-300 shadow-sm space-y-5">
@@ -879,31 +915,68 @@ export default function AdminPortalPage() {
           </div>
         )}
 
-        {/* TAB 5: SALES REPORTS & ANALYTICS */}
+        {/* TAB 5: SALES & KITCHEN PIN SECURITY SETTINGS */}
         {activeTab === 'analytics' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Category Breakdown */}
+              {/* KITCHEN PORTAL PIN SECURITY MANAGEMENT (ADDITIONAL REQUIREMENT) */}
               <div className="p-6 rounded-3xl bg-white border border-cream-300 shadow-sm space-y-4">
-                <h4 className="font-serif text-lg font-bold text-coffee-950">Menu Category Statistics</h4>
-                <div className="space-y-3">
-                  {categories.map(cat => {
-                    const count = foodItems.filter(i => i.categoryId === cat.id).length;
-                    const availableCount = foodItems.filter(i => i.categoryId === cat.id && i.isAvailable).length;
-                    return (
-                      <div key={cat.id} className="p-3 rounded-xl bg-cream-50 border border-cream-200 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="font-semibold text-coffee-950">{cat.name}</span>
-                          <span className="block text-[10px] text-coffee-500">{availableCount} of {count} available today</span>
-                        </div>
-                        <span className="font-bold text-coffee-800">{count} items</span>
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center">
+                    <Lock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-serif text-lg font-bold text-coffee-950">Kitchen Portal PIN Security</h4>
+                    <p className="text-xs text-coffee-500">Only Admin can create, change, or reset the Kitchen PIN</p>
+                  </div>
                 </div>
+
+                <div className="p-3.5 rounded-2xl bg-cream-50 border border-cream-200 text-xs text-coffee-800 space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold">Security Status:</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px]">
+                      Protected (SHA-256 Hashed)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-coffee-500 pt-1">
+                    Kitchen staff must enter this PIN to access the live Kitchen Display System (KDS).
+                  </p>
+                </div>
+
+                <form onSubmit={handleUpdateKitchenPin} className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-bold text-coffee-800 uppercase tracking-wider mb-1">
+                      Set New Kitchen Security PIN
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        maxLength={6}
+                        placeholder="Enter 4+ digit PIN"
+                        value={newKitchenPin}
+                        onChange={(e) => setNewKitchenPin(e.target.value)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-cream-50 border border-cream-300 text-sm font-mono text-coffee-950 focus:outline-none focus:ring-1 focus:ring-gold-500"
+                      />
+                      <button
+                        type="submit"
+                        className="px-4 py-2 rounded-xl bg-coffee-900 hover:bg-coffee-800 text-cream-50 font-bold text-xs uppercase tracking-wider flex items-center gap-1.5"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Update PIN</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {kitchenPinSuccess && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-800 font-semibold flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{kitchenPinSuccess}</span>
+                    </div>
+                  )}
+                </form>
               </div>
 
-              {/* Cafe Settings & Profile */}
+              {/* Cafe Settings & Operating Info */}
               <div className="p-6 rounded-3xl bg-white border border-cream-300 shadow-sm space-y-4">
                 <h4 className="font-serif text-lg font-bold text-coffee-950">Café Settings & Operating Info</h4>
                 <div className="space-y-2.5 text-xs text-coffee-700">
@@ -961,7 +1034,7 @@ export default function AdminPortalPage() {
                   value={editingItem.name || ''}
                   onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
                   className="w-full p-2.5 rounded-xl bg-cream-50 border border-cream-300 text-coffee-950"
-                  placeholder="e.g., Saffron Cardamom Latte"
+                  placeholder="e.g. Saffron Cardamom Latte"
                 />
               </div>
 
