@@ -230,14 +230,24 @@ export async function updateServerOrderStatus(orderId: string, status: OrderStat
   const order = serverOrders.find(o => o.id === orderId || o.orderNumber === orderId);
   if (order) {
     order.status = status;
+    // Any progression beyond 'paid' implies order acceptance in both portals
+    if (status !== 'paid') {
+      order.acknowledgedByAdmin = true;
+      order.acknowledgedByKitchen = true;
+    }
     order.updatedAt = new Date().toISOString();
   }
 
   if (supabaseServer) {
     try {
+      const updateData: any = { status, updated_at: new Date().toISOString() };
+      if (status !== 'paid') {
+        updateData.acknowledged_by_admin = true;
+        updateData.acknowledged_by_kitchen = true;
+      }
       await supabaseServer
         .from('orders')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update(updateData)
         .or(`id.eq.${orderId},order_number.eq.${orderId}`);
     } catch (e) {
       console.warn('Supabase order status update error:', e);
@@ -250,20 +260,22 @@ export async function updateServerOrderStatus(orderId: string, status: OrderStat
 export async function acknowledgeServerOrder(orderId: string, role: 'admin' | 'kitchen'): Promise<boolean> {
   const order = serverOrders.find(o => o.id === orderId || o.orderNumber === orderId);
   if (order) {
-    if (role === 'admin') order.acknowledgedByAdmin = true;
-    if (role === 'kitchen') order.acknowledgedByKitchen = true;
+    // When accepted in either Admin or Kitchen, both portals reflect accepted status
+    // and stop the notification sound for this specific order
+    order.acknowledgedByAdmin = true;
+    order.acknowledgedByKitchen = true;
     order.updatedAt = new Date().toISOString();
   }
 
   if (supabaseServer) {
     try {
-      const updateData = role === 'admin' 
-        ? { acknowledged_by_admin: true, updated_at: new Date().toISOString() }
-        : { acknowledged_by_kitchen: true, updated_at: new Date().toISOString() };
-
       await supabaseServer
         .from('orders')
-        .update(updateData)
+        .update({
+          acknowledged_by_admin: true,
+          acknowledged_by_kitchen: true,
+          updated_at: new Date().toISOString(),
+        })
         .or(`id.eq.${orderId},order_number.eq.${orderId}`);
     } catch (e) {
       console.warn('Supabase acknowledge error:', e);

@@ -53,6 +53,7 @@ export default function AdminPortalPage() {
   // Audio & Notification state
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Menu modal state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -74,12 +75,14 @@ export default function AdminPortalPage() {
   // Filter orders
   const [orderFilter, setOrderFilter] = useState<'all' | 'paid' | 'preparing' | 'ready' | 'served'>('all');
 
-  // Check login on load
+  // Check login on load & restore sound preference
   useEffect(() => {
     const sessionPin = sessionStorage.getItem('aradhana_admin_auth');
     if (sessionPin === 'true') {
       setIsAuthenticated(true);
     }
+    const enabled = soundManager.isSoundEnabled('admin');
+    setSoundEnabled(enabled);
   }, []);
 
   // Fetch orders from API / Supabase
@@ -91,13 +94,26 @@ export default function AdminPortalPage() {
         if (data.orders && Array.isArray(data.orders)) {
           setOrders(data.orders);
 
-          // Check if unacknowledged admin orders exist
-          const hasUnacked = data.orders.some((o: Order) => o.status === 'paid' && !o.acknowledgedByAdmin);
+          // Check if unaccepted orders exist across both portals
+          const unacceptedOrders = data.orders.filter(
+            (o: Order) => o.status === 'paid' && !o.acknowledgedByAdmin && !o.acknowledgedByKitchen
+          );
+          const hasUnaccepted = unacceptedOrders.length > 0;
 
-          if (hasUnacked && isAudioUnlocked) {
-            soundManager.startContinuousRinging();
+          // Play one-time notification sound for newly arrived orders
+          for (const ord of unacceptedOrders) {
+            if (!soundManager.hasOrderBeenNotified(ord.id)) {
+              soundManager.markOrderNotified(ord.id);
+              if (soundEnabled && isAudioUnlocked) {
+                soundManager.playNotificationSound();
+              }
+            }
+          }
+
+          if (hasUnaccepted && soundEnabled && isAudioUnlocked) {
+            soundManager.startContinuousRinging('admin');
             setIsRinging(true);
-          } else if (!hasUnacked) {
+          } else if (!hasUnaccepted) {
             soundManager.stopContinuousRinging();
             setIsRinging(false);
           }
@@ -106,7 +122,7 @@ export default function AdminPortalPage() {
     } catch (e) {
       console.warn('Admin load orders error:', e);
     }
-  }, [isAudioUnlocked]);
+  }, [isAudioUnlocked, soundEnabled]);
 
   // Subscribe to live orders & trigger audio ONLY in Admin
   useEffect(() => {
@@ -128,7 +144,7 @@ export default function AdminPortalPage() {
     loadOrders();
     const interval = setInterval(loadOrders, 3000);
 
-    // Supabase Realtime subscription
+    // Supabase Realtime subscription with automatic reconnect
     let channel: any = null;
     if (supabase) {
       try {
@@ -137,7 +153,13 @@ export default function AdminPortalPage() {
           .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
             loadOrders();
           })
-          .subscribe();
+          .subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+              console.log('Admin Realtime orders subscribed');
+            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+              loadOrders();
+            }
+          });
       } catch (err) {
         console.warn('Admin Realtime error:', err);
       }
@@ -147,8 +169,8 @@ export default function AdminPortalPage() {
     const onAradhanaEvent = (e: any) => {
       loadOrders();
       if (e.detail?.type === 'NEW_PAID_ORDER') {
-        if (isAudioUnlocked) {
-          soundManager.startContinuousRinging();
+        if (soundEnabled && isAudioUnlocked) {
+          soundManager.startContinuousRinging('admin');
           setIsRinging(true);
         }
       } else if (e.detail?.type === 'ORDER_STATUS_CHANGED' || e.detail?.type === 'ORDER_ACKNOWLEDGED') {
@@ -165,7 +187,7 @@ export default function AdminPortalPage() {
       window.removeEventListener('aradhana_event', onAradhanaEvent);
       soundManager.stopContinuousRinging();
     };
-  }, [isAuthenticated, isAudioUnlocked, loadOrders]);
+  }, [isAuthenticated, isAudioUnlocked, soundEnabled, loadOrders]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,6 +206,21 @@ export default function AdminPortalPage() {
   const handleUnlockAudio = () => {
     soundManager.unlockAudio();
     setIsAudioUnlocked(true);
+    soundManager.playNotificationSound();
+  };
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    soundManager.setSoundEnabled('admin', next);
+    if (next) {
+      soundManager.unlockAudio();
+      setIsAudioUnlocked(true);
+      soundManager.playNotificationSound();
+    } else {
+      soundManager.stopContinuousRinging();
+      setIsRinging(false);
+    }
   };
 
   const handleAcknowledge = async (orderId: string) => {
@@ -202,8 +239,10 @@ export default function AdminPortalPage() {
       console.warn('Admin ack error:', e);
     }
 
-    const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByAdmin);
-    if (!hasMoreUnacked) {
+    const hasMoreUnaccepted = orders.some(
+      o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByAdmin && !o.acknowledgedByKitchen
+    );
+    if (!hasMoreUnaccepted) {
       soundManager.stopContinuousRinging();
       setIsRinging(false);
     }
@@ -223,6 +262,16 @@ export default function AdminPortalPage() {
       loadOrders();
     } catch (e) {
       console.warn('Admin status change error:', e);
+    }
+
+    if (status !== 'paid') {
+      const hasMoreUnaccepted = orders.some(
+        o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByAdmin && !o.acknowledgedByKitchen
+      );
+      if (!hasMoreUnaccepted) {
+        soundManager.stopContinuousRinging();
+        setIsRinging(false);
+      }
     }
   };
 
@@ -327,7 +376,7 @@ export default function AdminPortalPage() {
   const todayRevenue = orders
     .filter(o => o.status !== 'cancelled')
     .reduce((sum, o) => sum + o.totalAmount, 0);
-  const pendingOrders = orders.filter(o => o.status === 'paid' && !o.acknowledgedByAdmin);
+  const pendingOrders = orders.filter(o => o.status === 'paid' && !o.acknowledgedByAdmin && !o.acknowledgedByKitchen);
   const preparingOrders = orders.filter(o => o.status === 'preparing');
   const readyOrders = orders.filter(o => o.status === 'ready');
   const servedOrders = orders.filter(o => o.status === 'served');
@@ -411,18 +460,31 @@ export default function AdminPortalPage() {
 
           {/* Right Header Alerts & Sound Controls */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Professional Sound ON / OFF toggle */}
             <button
-              onClick={handleUnlockAudio}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                isAudioUnlocked 
-                  ? 'bg-emerald-900/60 text-emerald-200 border border-emerald-500/30' 
-                  : 'bg-gold-500 text-coffee-950 animate-bounce'
+              onClick={toggleSound}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+                soundEnabled 
+                  ? 'bg-emerald-900/60 text-emerald-200 border-emerald-500/40 hover:bg-emerald-900/80 shadow-sm' 
+                  : 'bg-coffee-900/80 text-coffee-400 border-coffee-800 hover:bg-coffee-900'
               }`}
-              title="Ensure notification sounds can play"
+              title={soundEnabled ? 'Notification Sound is ON (Click to Mute)' : 'Notification Sound is OFF (Click to Turn ON)'}
             >
-              {isAudioUnlocked ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-              <span>{isAudioUnlocked ? 'Audio Active' : 'Enable Sound'}</span>
+              {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5 text-coffee-400" />}
+              <span>{soundEnabled ? 'Sound ON' : 'Sound OFF'}</span>
             </button>
+
+            {/* Browser Autoplay Permission Interaction */}
+            {!isAudioUnlocked && soundEnabled && (
+              <button
+                onClick={handleUnlockAudio}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gold-500 hover:bg-gold-400 text-coffee-950 text-[11px] font-bold animate-pulse shadow-md transition-transform active:scale-95"
+                title="Click once to grant browser audio playback permission"
+              >
+                <Bell className="w-3 h-3" />
+                <span>Enable Sound</span>
+              </button>
+            )}
 
             {isRinging && (
               <button
@@ -602,7 +664,7 @@ export default function AdminPortalPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {filteredOrders.map(order => {
-                  const isNew = order.status === 'paid' && !order.acknowledgedByAdmin;
+                  const isNew = order.status === 'paid' && !order.acknowledgedByAdmin && !order.acknowledgedByKitchen;
 
                   return (
                     <div 
@@ -685,15 +747,23 @@ export default function AdminPortalPage() {
                           <span className="font-bold text-base text-coffee-950">₹{order.totalAmount.toFixed(2)}</span>
                         </div>
 
-                        {/* Acknowledge Button if unacknowledged */}
-                        {isNew && (
+                        {/* Accept Button if unaccepted */}
+                        {isNew ? (
                           <button
                             onClick={() => handleAcknowledge(order.id)}
-                            className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                            className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 animate-pulse"
                           >
                             <BellOff className="w-4 h-4" />
-                            <span>Acknowledge Order & Stop Ringing</span>
+                            <span>Accept Order & Silence Alert</span>
                           </button>
+                        ) : (
+                          <div className="flex items-center justify-between text-[11px] py-1.5 px-2.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                            <span className="flex items-center gap-1.5">
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Order Accepted</span>
+                            </span>
+                            <span className="text-[10px] text-emerald-700 uppercase">Synced with Kitchen</span>
+                          </div>
                         )}
 
                         {/* Status Transition Buttons */}

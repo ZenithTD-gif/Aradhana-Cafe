@@ -7,6 +7,7 @@ import {
   Clock, 
   Volume2, 
   VolumeX, 
+  Bell,
   BellOff, 
   CheckCircle, 
   Flame, 
@@ -32,14 +33,17 @@ export default function KitchenPortalPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [filterTab, setFilterTab] = useState<'active' | 'ready' | 'history'>('active');
 
-  // Check existing session
+  // Check existing session & sound preference
   useEffect(() => {
     const sessionAuth = sessionStorage.getItem('aradhana_kitchen_auth');
     if (sessionAuth === 'true') {
       setIsAuthenticated(true);
     }
+    const enabled = soundManager.isSoundEnabled('kitchen');
+    setSoundEnabled(enabled);
   }, []);
 
   // Fetch orders from API / Supabase
@@ -51,13 +55,26 @@ export default function KitchenPortalPage() {
         if (data.orders && Array.isArray(data.orders)) {
           setOrders(data.orders);
 
-          // Check if unacknowledged kitchen orders exist
-          const hasUnacked = data.orders.some((o: Order) => o.status === 'paid' && !o.acknowledgedByKitchen);
+          // Check if unaccepted orders exist across both portals
+          const unacceptedOrders = data.orders.filter(
+            (o: Order) => o.status === 'paid' && !o.acknowledgedByKitchen && !o.acknowledgedByAdmin
+          );
+          const hasUnaccepted = unacceptedOrders.length > 0;
 
-          if (hasUnacked && isAudioUnlocked) {
-            soundManager.startContinuousRinging();
+          // Play one-time notification sound for new incoming tickets
+          for (const ord of unacceptedOrders) {
+            if (!soundManager.hasOrderBeenNotified(ord.id)) {
+              soundManager.markOrderNotified(ord.id);
+              if (soundEnabled && isAudioUnlocked) {
+                soundManager.playNotificationSound();
+              }
+            }
+          }
+
+          if (hasUnaccepted && soundEnabled && isAudioUnlocked) {
+            soundManager.startContinuousRinging('kitchen');
             setIsRinging(true);
-          } else if (!hasUnacked) {
+          } else if (!hasUnaccepted) {
             soundManager.stopContinuousRinging();
             setIsRinging(false);
           }
@@ -66,7 +83,7 @@ export default function KitchenPortalPage() {
     } catch (e) {
       console.warn('Kitchen load orders error:', e);
     }
-  }, [isAudioUnlocked]);
+  }, [isAudioUnlocked, soundEnabled]);
 
   // Subscribe to live orders and trigger audio ONLY in kitchen
   useEffect(() => {
@@ -75,7 +92,7 @@ export default function KitchenPortalPage() {
     loadOrders();
     const interval = setInterval(loadOrders, 3000);
 
-    // Supabase Realtime
+    // Supabase Realtime with auto-reconnect
     let channel: any = null;
     if (supabase) {
       try {
@@ -84,7 +101,13 @@ export default function KitchenPortalPage() {
           .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
             loadOrders();
           })
-          .subscribe();
+          .subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+              console.log('Kitchen Realtime orders subscribed');
+            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+              loadOrders();
+            }
+          });
       } catch (err) {
         console.warn('Kitchen Realtime error:', err);
       }
@@ -92,10 +115,10 @@ export default function KitchenPortalPage() {
 
     // Direct broadcast listener
     const onAradhanaEvent = (e: any) => {
+      loadOrders();
       if (e.detail?.type === 'NEW_PAID_ORDER') {
-        loadOrders();
-        if (isAudioUnlocked) {
-          soundManager.startContinuousRinging();
+        if (soundEnabled && isAudioUnlocked) {
+          soundManager.startContinuousRinging('kitchen');
           setIsRinging(true);
         }
       } else if (e.detail?.type === 'ORDER_STATUS_CHANGED' || e.detail?.type === 'ORDER_ACKNOWLEDGED') {
@@ -111,7 +134,7 @@ export default function KitchenPortalPage() {
       window.removeEventListener('aradhana_event', onAradhanaEvent);
       soundManager.stopContinuousRinging();
     };
-  }, [isAuthenticated, isAudioUnlocked, loadOrders]);
+  }, [isAuthenticated, isAudioUnlocked, soundEnabled, loadOrders]);
 
   // Handle Kitchen PIN Login
   const handlePinSubmit = async (e: React.FormEvent) => {
@@ -152,6 +175,21 @@ export default function KitchenPortalPage() {
   const handleUnlockAudio = () => {
     soundManager.unlockAudio();
     setIsAudioUnlocked(true);
+    soundManager.playNotificationSound();
+  };
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    soundManager.setSoundEnabled('kitchen', next);
+    if (next) {
+      soundManager.unlockAudio();
+      setIsAudioUnlocked(true);
+      soundManager.playNotificationSound();
+    } else {
+      soundManager.stopContinuousRinging();
+      setIsRinging(false);
+    }
   };
 
   const handleAcknowledge = async (orderId: string) => {
@@ -167,8 +205,10 @@ export default function KitchenPortalPage() {
       console.warn('Acknowledge error:', e);
     }
 
-    const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByKitchen);
-    if (!hasMoreUnacked) {
+    const hasMoreUnaccepted = orders.some(
+      o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByKitchen && !o.acknowledgedByAdmin
+    );
+    if (!hasMoreUnaccepted) {
       soundManager.stopContinuousRinging();
       setIsRinging(false);
     }
@@ -182,7 +222,7 @@ export default function KitchenPortalPage() {
         body: JSON.stringify({ 
           orderId, 
           status: newStatus,
-          acknowledgeRole: newStatus === 'preparing' ? 'kitchen' : undefined,
+          acknowledgeRole: 'kitchen',
         }),
       });
       getCafeStore().updateOrderStatus(orderId, newStatus);
@@ -191,8 +231,12 @@ export default function KitchenPortalPage() {
       console.warn('Status change error:', e);
     }
 
-    if (newStatus === 'preparing') {
-      handleAcknowledge(orderId);
+    const hasMoreUnaccepted = orders.some(
+      o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByKitchen && !o.acknowledgedByAdmin
+    );
+    if (!hasMoreUnaccepted) {
+      soundManager.stopContinuousRinging();
+      setIsRinging(false);
     }
   };
 
@@ -282,17 +326,31 @@ export default function KitchenPortalPage() {
 
         {/* Header Controls: Sound & Lock Dashboard */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Professional Sound ON / OFF toggle */}
           <button
-            onClick={handleUnlockAudio}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-              isAudioUnlocked
-                ? 'bg-emerald-950 text-emerald-400 border border-emerald-600/40'
-                : 'bg-amber-500 text-stone-950 animate-bounce shadow-lg'
+            onClick={toggleSound}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+              soundEnabled
+                ? 'bg-emerald-950 text-emerald-400 border-emerald-600/50 hover:bg-emerald-900/60 shadow-sm'
+                : 'bg-stone-800 text-stone-400 border-stone-700 hover:bg-stone-750'
             }`}
+            title={soundEnabled ? 'Kitchen Audio is ON (Click to Mute)' : 'Kitchen Audio is OFF (Click to Turn ON)'}
           >
-            {isAudioUnlocked ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-            <span>{isAudioUnlocked ? 'Audio Active' : 'Enable Sound'}</span>
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5 text-stone-400" />}
+            <span>{soundEnabled ? 'Sound ON' : 'Sound OFF'}</span>
           </button>
+
+          {/* Browser Autoplay Permission Interaction */}
+          {!isAudioUnlocked && soundEnabled && (
+            <button
+              onClick={handleUnlockAudio}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold animate-bounce shadow-lg"
+              title="Click once to permit browser audio alerts"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              <span>Enable Sound</span>
+            </button>
+          )}
 
           {isRinging && (
             <button
@@ -300,7 +358,7 @@ export default function KitchenPortalPage() {
                 soundManager.stopContinuousRinging();
                 setIsRinging(false);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600 text-white text-xs font-bold animate-pulse shadow-xl"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold animate-pulse shadow-xl"
             >
               <BellOff className="w-3.5 h-3.5" />
               <span>Silence Alarm</span>
@@ -382,7 +440,7 @@ export default function KitchenPortalPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
               {activeKitchenTickets.map((ticket) => {
-                const isFresh = ticket.status === 'paid' && !ticket.acknowledgedByKitchen;
+                const isFresh = ticket.status === 'paid' && !ticket.acknowledgedByKitchen && !ticket.acknowledgedByAdmin;
                 const isPreparing = ticket.status === 'preparing';
 
                 return (
@@ -410,6 +468,11 @@ export default function KitchenPortalPage() {
                         <span className="text-[11px] font-mono text-amber-400 block mt-0.5">
                           #{ticket.orderNumber}
                         </span>
+                        {ticket.customerName && (
+                          <span className="text-xs text-stone-300 font-medium block mt-0.5">
+                            Guest: {ticket.customerName}
+                          </span>
+                        )}
                       </div>
 
                       <div className="text-right">
