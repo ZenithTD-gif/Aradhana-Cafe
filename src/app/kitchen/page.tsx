@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   ChefHat, 
@@ -13,11 +13,11 @@ import {
   UtensilsCrossed, 
   MessageSquare, 
   Lock, 
-  Unlock, 
   KeyRound, 
   AlertCircle 
 } from 'lucide-react';
 import { getCafeStore } from '@/lib/store/cafe-store';
+import { supabase } from '@/lib/supabase/client';
 import { soundManager } from '@/lib/audio/sound-alerts';
 import { Order, OrderStatus } from '@/types';
 
@@ -42,49 +42,76 @@ export default function KitchenPortalPage() {
     }
   }, []);
 
+  // Fetch orders from API / Supabase
+  const loadOrders = useCallback(async () => {
+    try {
+      const res = await fetch('/api/orders', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.orders && Array.isArray(data.orders)) {
+          setOrders(data.orders);
+
+          // Check if unacknowledged kitchen orders exist
+          const hasUnacked = data.orders.some((o: Order) => o.status === 'paid' && !o.acknowledgedByKitchen);
+
+          if (hasUnacked && isAudioUnlocked) {
+            soundManager.startContinuousRinging();
+            setIsRinging(true);
+          } else if (!hasUnacked) {
+            soundManager.stopContinuousRinging();
+            setIsRinging(false);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Kitchen load orders error:', e);
+    }
+  }, [isAudioUnlocked]);
+
   // Subscribe to live orders and trigger audio ONLY in kitchen
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const cafeStore = getCafeStore();
+    loadOrders();
+    const interval = setInterval(loadOrders, 3000);
 
-    const handleUpdate = () => {
-      const currentOrders = cafeStore.getOrders();
-      setOrders(currentOrders);
-
-      // Check for unacknowledged kitchen orders
-      const hasUnacked = currentOrders.some(o => o.status === 'paid' && !o.acknowledgedByKitchen);
-
-      if (hasUnacked && isAudioUnlocked) {
-        soundManager.startContinuousRinging();
-        setIsRinging(true);
-      } else if (!hasUnacked) {
-        soundManager.stopContinuousRinging();
-        setIsRinging(false);
+    // Supabase Realtime
+    let channel: any = null;
+    if (supabase) {
+      try {
+        channel = supabase
+          .channel('kitchen_orders_realtime')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+            loadOrders();
+          })
+          .subscribe();
+      } catch (err) {
+        console.warn('Kitchen Realtime error:', err);
       }
-    };
+    }
 
-    handleUpdate();
-    const unsub = cafeStore.subscribe(handleUpdate);
-
-    // Also listen to direct broadcast
+    // Direct broadcast listener
     const onAradhanaEvent = (e: any) => {
       if (e.detail?.type === 'NEW_PAID_ORDER') {
+        loadOrders();
         if (isAudioUnlocked) {
           soundManager.startContinuousRinging();
           setIsRinging(true);
         }
+      } else if (e.detail?.type === 'ORDER_STATUS_CHANGED' || e.detail?.type === 'ORDER_ACKNOWLEDGED') {
+        loadOrders();
       }
     };
 
     window.addEventListener('aradhana_event', onAradhanaEvent);
 
     return () => {
-      unsub();
+      clearInterval(interval);
+      if (channel && supabase) supabase.removeChannel(channel);
       window.removeEventListener('aradhana_event', onAradhanaEvent);
       soundManager.stopContinuousRinging();
     };
-  }, [isAuthenticated, isAudioUnlocked]);
+  }, [isAuthenticated, isAudioUnlocked, loadOrders]);
 
   // Handle Kitchen PIN Login
   const handlePinSubmit = async (e: React.FormEvent) => {
@@ -97,8 +124,6 @@ export default function KitchenPortalPage() {
     try {
       const cafeStore = getCafeStore();
       const isValid = await cafeStore.verifyKitchenPin(enteredPin.trim());
-
-      // Fallback for default PIN 1080 if not yet initialized
       const isDefault = enteredPin.trim() === '1080';
 
       if (isValid || isDefault) {
@@ -129,8 +154,19 @@ export default function KitchenPortalPage() {
     setIsAudioUnlocked(true);
   };
 
-  const handleAcknowledge = (orderId: string) => {
-    getCafeStore().acknowledgeOrder(orderId, 'kitchen');
+  const handleAcknowledge = async (orderId: string) => {
+    try {
+      await fetch('/api/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, acknowledgeRole: 'kitchen' }),
+      });
+      getCafeStore().acknowledgeOrder(orderId, 'kitchen');
+      loadOrders();
+    } catch (e) {
+      console.warn('Acknowledge error:', e);
+    }
+
     const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByKitchen);
     if (!hasMoreUnacked) {
       soundManager.stopContinuousRinging();
@@ -138,8 +174,23 @@ export default function KitchenPortalPage() {
     }
   };
 
-  const handleStatusChange = (orderId: string, newStatus: OrderStatus) => {
-    getCafeStore().updateOrderStatus(orderId, newStatus);
+  const handleStatusChange = async (orderId: string, newStatus: OrderStatus) => {
+    try {
+      await fetch('/api/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          orderId, 
+          status: newStatus,
+          acknowledgeRole: newStatus === 'preparing' ? 'kitchen' : undefined,
+        }),
+      });
+      getCafeStore().updateOrderStatus(orderId, newStatus);
+      loadOrders();
+    } catch (e) {
+      console.warn('Status change error:', e);
+    }
+
     if (newStatus === 'preparing') {
       handleAcknowledge(orderId);
     }

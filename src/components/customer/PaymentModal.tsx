@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, ShieldCheck, QrCode, Smartphone, CheckCircle, Loader2, Copy, Check } from 'lucide-react';
+import { X, ShieldCheck, CheckCircle, Loader2, Copy, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { getCafeStore } from '@/lib/store/cafe-store';
@@ -30,7 +30,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onPaymentSuccess,
 }) => {
   const [isVerifying, setIsVerifying] = useState(false);
-  const [selectedUpiApp, setSelectedUpiApp] = useState<'gpay' | 'phonepe' | 'paytm' | 'cred'>('gpay');
   const [copiedUpi, setCopiedUpi] = useState(false);
 
   if (!isOpen) return null;
@@ -50,7 +49,21 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       const cartStore = getCartStore();
       const cartItems = cartStore.getItems();
 
-      // Step 1: Request order verification from trusted backend
+      if (cartItems.length === 0) {
+        throw new Error('Your cart is empty. Please add items before paying.');
+      }
+
+      const formattedItems = cartItems.map(item => ({
+        foodItemId: item.foodItem.id,
+        itemName: item.foodItem.name,
+        unitPrice: item.foodItem.price,
+        quantity: item.quantity,
+        specialNotes: item.specialNotes,
+        imageUrl: item.foodItem.imageUrl,
+        isVeg: item.foodItem.isVeg,
+      }));
+
+      // Step 1: Send payment verification & order creation to backend
       const res = await fetch('/api/payments/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -61,34 +74,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           customerName: orderData.customerName,
           customerPhone: orderData.customerPhone,
           customerNotes: orderData.customerNotes,
+          items: formattedItems,
           isSimulated: true,
         }),
       });
 
       const verificationData = await res.json();
 
-      if (!res.ok || !verificationData.success) {
+      if (!res.ok || !verificationData.success || !verificationData.order) {
         throw new Error(verificationData.error || 'Payment verification failed');
       }
 
-      // Step 2: Create confirmed paid order in store
+      const confirmedOrder: Order = verificationData.order;
+
+      // Update local client store cache as well
       const cafeStore = getCafeStore();
-      const confirmedOrder = cafeStore.createPaidOrder({
-        tableNumber: orderData.tableNumber,
-        items: cartItems.map(item => ({
-          foodItemId: item.foodItem.id,
-          itemName: item.foodItem.name,
-          unitPrice: item.foodItem.price,
-          quantity: item.quantity,
-          specialNotes: item.specialNotes,
-          imageUrl: item.foodItem.imageUrl,
-          isVeg: item.foodItem.isVeg,
-        })),
-        customerName: orderData.customerName,
-        customerPhone: orderData.customerPhone,
-        customerNotes: orderData.customerNotes,
-        paymentId: verificationData.paymentId,
-      });
+      cafeStore.broadcast('NEW_PAID_ORDER', confirmedOrder);
 
       // Clear cart
       cartStore.clearCart();
@@ -101,7 +102,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         colors: ['#D4AF37', '#6F4E37', '#22130B'],
       });
 
-      // Callback
+      // Navigate to order tracking with confirmed order
       onPaymentSuccess(confirmedOrder);
     } catch (err: any) {
       alert(err.message || 'Payment processing error');

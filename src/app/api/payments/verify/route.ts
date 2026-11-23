@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyRazorpaySignature } from '@/lib/payment/razorpay';
+import { createServerPaidOrder } from '@/lib/orders/server-orders';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,18 +40,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Generate unique random coupon code: e.g. ARD-5289
-    const couponCode = `ARD-${Math.floor(1000 + Math.random() * 9000)}`;
-    const orderNumber = `ARD-${new Date().getFullYear().toString().slice(-2)}${Math.floor(1000 + Math.random() * 9000)}`;
+    // Step 2: Create Confirmed Paid Order directly into Supabase & Server Store
+    const confirmedOrder = await createServerPaidOrder({
+      tableNumber: tableNumber || 'Table 01',
+      items: items || [],
+      customerName: customerName || 'Café Guest',
+      customerPhone: customerPhone || '',
+      customerNotes: customerNotes || '',
+      paymentId: razorpay_payment_id,
+    });
 
     return NextResponse.json({
       success: true,
       verified: true,
-      orderNumber,
-      couponCode,
+      order: confirmedOrder,
+      orderNumber: confirmedOrder.orderNumber,
+      couponCode: confirmedOrder.couponCode,
       paymentId: razorpay_payment_id,
-      tableNumber,
-      message: 'Payment verified successfully. Order confirmed.',
+      tableNumber: confirmedOrder.tableNumber,
+      message: 'Payment verified and order persisted to database successfully.',
     });
   } catch (error: any) {
     console.error('Payment verification error:', error);

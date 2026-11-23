@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   Bell, 
@@ -31,6 +31,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { getCafeStore } from '@/lib/store/cafe-store';
 import { soundManager } from '@/lib/audio/sound-alerts';
+import { supabase } from '@/lib/supabase/client';
 import { Category, FoodItem, Order, OrderStatus, TableItem, RestaurantSettings } from '@/types';
 
 export default function AdminPortalPage() {
@@ -81,52 +82,90 @@ export default function AdminPortalPage() {
     }
   }, []);
 
-  // Subscribe to live cafe store & trigger audio ONLY in Admin
+  // Fetch orders from API / Supabase
+  const loadOrders = useCallback(async () => {
+    try {
+      const res = await fetch('/api/orders', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.orders && Array.isArray(data.orders)) {
+          setOrders(data.orders);
+
+          // Check if unacknowledged admin orders exist
+          const hasUnacked = data.orders.some((o: Order) => o.status === 'paid' && !o.acknowledgedByAdmin);
+
+          if (hasUnacked && isAudioUnlocked) {
+            soundManager.startContinuousRinging();
+            setIsRinging(true);
+          } else if (!hasUnacked) {
+            soundManager.stopContinuousRinging();
+            setIsRinging(false);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Admin load orders error:', e);
+    }
+  }, [isAudioUnlocked]);
+
+  // Subscribe to live orders & trigger audio ONLY in Admin
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const cafeStore = getCafeStore();
     const handleUpdate = () => {
-      const currentOrders = cafeStore.getOrders();
-      setOrders(currentOrders);
       setFoodItems(cafeStore.getFoodItems());
       setCategories(cafeStore.getCategories());
       setTables(cafeStore.getTables());
       setSettings(cafeStore.getSettings());
-
-      // Check if unacknowledged admin orders exist
-      const hasUnacked = currentOrders.some(o => o.status === 'paid' && !o.acknowledgedByAdmin);
-
-      if (hasUnacked && isAudioUnlocked) {
-        soundManager.startContinuousRinging();
-        setIsRinging(true);
-      } else if (!hasUnacked) {
-        soundManager.stopContinuousRinging();
-        setIsRinging(false);
-      }
+      loadOrders();
     };
 
     handleUpdate();
     const unsub = cafeStore.subscribe(handleUpdate);
 
+    // Initial load and dual-layer polling fallback (3s)
+    loadOrders();
+    const interval = setInterval(loadOrders, 3000);
+
+    // Supabase Realtime subscription
+    let channel: any = null;
+    if (supabase) {
+      try {
+        channel = supabase
+          .channel('admin_orders_realtime')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+            loadOrders();
+          })
+          .subscribe();
+      } catch (err) {
+        console.warn('Admin Realtime error:', err);
+      }
+    }
+
     // Direct broadcast listener for new orders
     const onAradhanaEvent = (e: any) => {
+      loadOrders();
       if (e.detail?.type === 'NEW_PAID_ORDER') {
         if (isAudioUnlocked) {
           soundManager.startContinuousRinging();
           setIsRinging(true);
         }
+      } else if (e.detail?.type === 'ORDER_STATUS_CHANGED' || e.detail?.type === 'ORDER_ACKNOWLEDGED') {
+        loadOrders();
       }
     };
 
     window.addEventListener('aradhana_event', onAradhanaEvent);
 
     return () => {
+      clearInterval(interval);
+      if (channel && supabase) supabase.removeChannel(channel);
       unsub();
       window.removeEventListener('aradhana_event', onAradhanaEvent);
       soundManager.stopContinuousRinging();
     };
-  }, [isAuthenticated, isAudioUnlocked]);
+  }, [isAuthenticated, isAudioUnlocked, loadOrders]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,8 +186,22 @@ export default function AdminPortalPage() {
     setIsAudioUnlocked(true);
   };
 
-  const handleAcknowledge = (orderId: string) => {
+  const handleAcknowledge = async (orderId: string) => {
+    // 1. Local update
     getCafeStore().acknowledgeOrder(orderId, 'admin');
+
+    // 2. Server API update
+    try {
+      await fetch('/api/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, role: 'admin' })
+      });
+      loadOrders();
+    } catch (e) {
+      console.warn('Admin ack error:', e);
+    }
+
     const hasMoreUnacked = orders.some(o => o.id !== orderId && o.status === 'paid' && !o.acknowledgedByAdmin);
     if (!hasMoreUnacked) {
       soundManager.stopContinuousRinging();
@@ -156,8 +209,21 @@ export default function AdminPortalPage() {
     }
   };
 
-  const handleStatusChange = (orderId: string, status: OrderStatus) => {
+  const handleStatusChange = async (orderId: string, status: OrderStatus) => {
+    // 1. Local update
     getCafeStore().updateOrderStatus(orderId, status);
+
+    // 2. Server API update
+    try {
+      await fetch('/api/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, status })
+      });
+      loadOrders();
+    } catch (e) {
+      console.warn('Admin status change error:', e);
+    }
   };
 
   // Real-Time Availability Switch
@@ -194,19 +260,50 @@ export default function AdminPortalPage() {
     setNewTableNumber('');
   };
 
-  const handleVerifyCoupon = (e: React.FormEvent) => {
+  const handleVerifyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!lookupCode.trim()) return;
+    try {
+      const res = await fetch('/api/coupons/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: lookupCode.trim(), action: 'verify' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLookupResult(data);
+        return;
+      }
+    } catch (e) {
+      console.warn('Coupon verify error:', e);
+    }
     const res = getCafeStore().verifyCouponCode(lookupCode.trim());
     setLookupResult(res);
   };
 
-  const handleRedeemCoupon = () => {
+  const handleRedeemCoupon = async () => {
     if (!lookupCode.trim()) return;
+    try {
+      const res = await fetch('/api/coupons/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: lookupCode.trim(), action: 'redeem', redeemedBy: 'Admin Desk' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.message || 'Coupon redeemed successfully.');
+        setLookupResult(data);
+        loadOrders();
+        return;
+      }
+    } catch (e) {
+      console.warn('Coupon redeem error:', e);
+    }
     const res = getCafeStore().redeemCoupon(lookupCode.trim(), 'Admin Desk');
     alert(res.message);
     const refreshed = getCafeStore().verifyCouponCode(lookupCode.trim());
     setLookupResult(refreshed);
+    loadOrders();
   };
 
   // Update Kitchen Security PIN

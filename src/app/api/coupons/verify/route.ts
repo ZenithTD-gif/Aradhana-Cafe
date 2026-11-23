@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyServerCoupon, redeemServerCoupon } from '@/lib/orders/server-orders';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,11 +11,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Coupon code is required' }, { status: 400 });
     }
 
-    return NextResponse.json({
-      valid: true,
-      code: code.trim().toUpperCase(),
-      message: 'Coupon query received',
-    });
+    if (action === 'redeem') {
+      const result = await redeemServerCoupon(code, redeemedBy);
+      return NextResponse.json(result);
+    } else {
+      const result = await verifyServerCoupon(code);
+      return NextResponse.json(result);
+    }
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

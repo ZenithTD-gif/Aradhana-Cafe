@@ -8,7 +8,6 @@ import {
   Clock, 
   ChefHat, 
   UtensilsCrossed, 
-  QrCode, 
   ArrowLeft, 
   Ticket, 
   Copy, 
@@ -18,6 +17,7 @@ import {
   RefreshCw 
 } from 'lucide-react';
 import { getCafeStore } from '@/lib/store/cafe-store';
+import { supabase } from '@/lib/supabase/client';
 import { Order, OrderStatus } from '@/types';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
@@ -31,14 +31,62 @@ export default function OrderTrackingPage() {
   const [copiedCoupon, setCopiedCoupon] = useState(false);
 
   useEffect(() => {
-    const cafeStore = getCafeStore();
-    const loadOrder = () => {
-      const found = cafeStore.getOrderById(orderId);
-      if (found) setOrder({ ...found });
+    let isMounted = true;
+
+    const fetchOrder = async () => {
+      // 1. Try local store
+      const cafeStore = getCafeStore();
+      const local = cafeStore.getOrderById(orderId);
+      if (local && isMounted) {
+        setOrder({ ...local });
+      }
+
+      // 2. Fetch latest from API & Supabase
+      try {
+        const res = await fetch('/api/orders', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.orders && Array.isArray(data.orders)) {
+            const found = data.orders.find((o: Order) => o.id === orderId || o.orderNumber === orderId);
+            if (found && isMounted) {
+              setOrder({ ...found });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Order fetch error:', e);
+      }
     };
 
-    loadOrder();
-    return cafeStore.subscribe(loadOrder);
+    fetchOrder();
+
+    // Poll every 3 seconds for live kitchen updates
+    const pollInterval = setInterval(fetchOrder, 3000);
+
+    // Supabase Realtime channel subscription
+    let realtimeChannel: any = null;
+    if (supabase) {
+      try {
+        realtimeChannel = supabase
+          .channel(`order_track_${orderId}`)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, (payload) => {
+            if (payload.new && (payload.new.id === orderId || payload.new.order_number === orderId)) {
+              fetchOrder();
+            }
+          })
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription error:', err);
+      }
+    }
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+      if (realtimeChannel && supabase) {
+        supabase.removeChannel(realtimeChannel);
+      }
+    };
   }, [orderId]);
 
   const handleCopyCoupon = () => {
@@ -59,7 +107,7 @@ export default function OrderTrackingPage() {
           </div>
           <h2 className="font-serif text-2xl font-bold text-coffee-950">Locating Order Details...</h2>
           <p className="text-sm text-coffee-600 mt-1 max-w-sm">
-            Fetching order #{orderId}. If you just completed payment, it will appear momentarily.
+            Fetching order #{orderId}. Confirming with kitchen...
           </p>
           <Link
             href="/"
@@ -73,7 +121,6 @@ export default function OrderTrackingPage() {
     );
   }
 
-  // Determine active step index
   const statusSteps: { key: OrderStatus; label: string; desc: string; icon: any }[] = [
     { key: 'paid', label: 'Payment Confirmed', desc: 'Order transmitted to chef', icon: CheckCircle2 },
     { key: 'preparing', label: 'In the Kitchen', desc: 'Chef is crafting your food', icon: ChefHat },
@@ -89,7 +136,6 @@ export default function OrderTrackingPage() {
       <Navbar />
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Navigation back */}
         <div className="flex items-center justify-between">
           <Link
             href="/"
@@ -103,9 +149,8 @@ export default function OrderTrackingPage() {
           </span>
         </div>
 
-        {/* UNIQUE ORDER COUPON CODE CARD (CRITICAL REQUIREMENT 4) */}
+        {/* UNIQUE ORDER COUPON CODE CARD */}
         <div className="relative rounded-3xl bg-gradient-to-br from-coffee-900 via-coffee-950 to-coffee-900 text-cream-50 p-6 sm:p-8 shadow-2xl border-2 border-gold-400 overflow-hidden">
-          {/* Background decorative seals */}
           <div className="absolute top-0 right-0 -mt-10 -mr-10 w-44 h-44 rounded-full bg-gold-500/10 blur-2xl pointer-events-none" />
 
           <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
@@ -122,7 +167,6 @@ export default function OrderTrackingPage() {
               </p>
             </div>
 
-            {/* Big Bold Coupon Code Badge */}
             <div className="flex flex-col items-center">
               <div className="p-4 px-6 rounded-2xl bg-white/10 backdrop-blur-md border border-gold-400/50 shadow-inner text-center">
                 <span className="text-[10px] uppercase font-bold tracking-widest text-gold-400 block">
@@ -178,7 +222,6 @@ export default function OrderTrackingPage() {
             </div>
           </div>
 
-          {/* Stepper Progress */}
           <div className="relative">
             <div className="grid grid-cols-4 gap-2 text-center">
               {statusSteps.map((step, idx) => {
@@ -239,7 +282,6 @@ export default function OrderTrackingPage() {
             ))}
           </div>
 
-          {/* Pricing Breakdown */}
           <div className="pt-4 border-t border-cream-200 space-y-1.5 text-xs text-coffee-700">
             <div className="flex justify-between">
               <span>Subtotal:</span>
