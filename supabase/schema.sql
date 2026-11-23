@@ -346,4 +346,4 @@ INSERT INTO tables (table_number, capacity, section, qr_code_token) VALUES
 ('Table 06', 4, 'Private Alcove', 'token-tbl-06'),
 ('Table 07', 8, 'Family Dining', 'token-tbl-07'),
 ('Table 08', 2, 'Espresso Bar', 'token-tbl-08')
-ON CONFLICT (table_number) DO NOTHING;
+ON CONFLICT DO NOTHING;
