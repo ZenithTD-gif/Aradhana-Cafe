@@ -28,15 +28,15 @@ END $$;
 CREATE TABLE IF NOT EXISTS restaurant_settings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     cafe_name TEXT NOT NULL DEFAULT 'Aradhana Café',
-    tagline TEXT DEFAULT 'A symphony of taste, tradition & warmth',
+    tagline TEXT DEFAULT 'A sanctuary of taste, tradition & warmth',
     phone TEXT DEFAULT '+91 98765 43210',
     email TEXT DEFAULT 'hello@aradhanacafe.com',
     address TEXT DEFAULT '108 Heritage Boulevard, Indiranagar, Bengaluru, Karnataka 560038',
     google_maps_url TEXT DEFAULT 'https://maps.google.com/?q=Aradhana+Cafe',
-    opening_hours TEXT DEFAULT 'Mon - Sun: 7:30 AM – 11:00 PM',
+    opening_hours TEXT DEFAULT 'Open 7 AM to 11 PM',
     tax_percentage NUMERIC(5, 2) DEFAULT 5.00,
     service_charge_percentage NUMERIC(5, 2) DEFAULT 0.00,
-    upi_id TEXT DEFAULT 'aradhanacafe@upi',
+    upi_id TEXT DEFAULT 'aradhanacafe@icici',
     banner_text TEXT DEFAULT '✨ Welcome to Aradhana Café! Enjoy handcrafted brew & artisan delicacies.',
     is_open BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS food_items (
     is_veg BOOLEAN DEFAULT true,
     is_spicy BOOLEAN DEFAULT false,
     is_chef_special BOOLEAN DEFAULT false,
-    preparation_time_mins INT DEFAULT 15,
+    preparation_time_mins INT DEFAULT 5,
     calories INT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -190,6 +190,17 @@ CREATE TABLE IF NOT EXISTS order_status_history (
 );
 
 -- ====================================================================
+-- SCHEMA PERMISSIONS FOR SUPABASE ROLES (CRITICAL)
+-- ====================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+
+-- ====================================================================
 -- INDEXES FOR MAXIMUM QUERY PERFORMANCE
 -- ====================================================================
 CREATE INDEX IF NOT EXISTS idx_food_items_category ON food_items(category_id);
@@ -229,7 +240,7 @@ CREATE POLICY "Public read categories" ON categories FOR SELECT USING (true);
 CREATE POLICY "Public read food_items" ON food_items FOR SELECT USING (true);
 CREATE POLICY "Public read tables" ON tables FOR SELECT USING (true);
 
--- Customers can create orders and check their own order status via order_number
+-- Customer orders access
 CREATE POLICY "Public insert orders" ON orders FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public select orders" ON orders FOR SELECT USING (true);
 CREATE POLICY "Public update orders" ON orders FOR UPDATE USING (true);
@@ -247,7 +258,7 @@ CREATE POLICY "Public update coupons" ON coupons FOR UPDATE USING (true);
 CREATE POLICY "Public access notifications" ON notifications FOR ALL USING (true);
 CREATE POLICY "Public access order_status_history" ON order_status_history FOR ALL USING (true);
 
--- Admin Full Access Policies (Authenticated users with admin/chef role)
+-- Admin Full Access Policies
 CREATE POLICY "Admin update restaurant_settings" ON restaurant_settings FOR ALL USING (true);
 CREATE POLICY "Admin full categories" ON categories FOR ALL USING (true);
 CREATE POLICY "Admin full food_items" ON food_items FOR ALL USING (true);
@@ -259,22 +270,22 @@ CREATE POLICY "Admin full tables" ON tables FOR ALL USING (true);
 INSERT INTO restaurant_settings (cafe_name, tagline, phone, email, address, opening_hours, upi_id)
 VALUES (
     'Aradhana Café',
-    'A sanctuary of artisanal coffee, authentic south-indian roasts, & gourmet European delicacies',
+    'A sanctuary of artisanal coffee, authentic south-indian roasts, & gourmet delicacies',
     '+91 98765 43210',
-    'contact@aradhanacafe.com',
-    '108 Heritage Boulevard, Indiranagar, Bengaluru, Karnataka 560038',
-    'Monday – Sunday: 7:00 AM – 11:00 PM',
+    'hello@aradhanacafe.com',
+    '108 Heritage Boulevard, 12th Main, Indiranagar, Bengaluru, Karnataka 560038',
+    'Open 7 AM to 11 PM',
     'aradhanacafe@icici'
 ) ON CONFLICT DO NOTHING;
 
 -- Initial Tables
 INSERT INTO tables (table_number, capacity, section, qr_code_token) VALUES
-('Table 1', 2, 'Indoor Courtyard', 'token-tbl-01'),
-('Table 2', 4, 'Indoor Courtyard', 'token-tbl-02'),
-('Table 3', 4, 'Window View', 'token-tbl-03'),
-('Table 4', 6, 'Garden Terrace', 'token-tbl-04'),
-('Table 5', 2, 'Balcony Lounge', 'token-tbl-05'),
-('Table 6', 4, 'Private Alcove', 'token-tbl-06'),
-('Table 7', 8, 'Family Dining', 'token-tbl-07'),
-('Table 8', 2, 'Espresso Bar', 'token-tbl-08')
+('Table 01', 2, 'Indoor Courtyard', 'token-tbl-01'),
+('Table 02', 4, 'Indoor Courtyard', 'token-tbl-02'),
+('Table 03', 4, 'Window View', 'token-tbl-03'),
+('Table 04', 6, 'Garden Terrace', 'token-tbl-04'),
+('Table 05', 2, 'Balcony Lounge', 'token-tbl-05'),
+('Table 06', 4, 'Private Alcove', 'token-tbl-06'),
+('Table 07', 8, 'Family Dining', 'token-tbl-07'),
+('Table 08', 2, 'Espresso Bar', 'token-tbl-08')
 ON CONFLICT (table_number) DO NOTHING;
