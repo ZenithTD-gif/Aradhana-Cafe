@@ -31,6 +31,8 @@ export default function KitchenPortalPage() {
 
   // Orders & Audio State
   const [orders, setOrders] = useState<Order[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   const [isRinging, setIsRinging] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -52,6 +54,7 @@ export default function KitchenPortalPage() {
       const res = await fetch('/api/orders', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
+        setFetchError(null);
         if (data.orders && Array.isArray(data.orders)) {
           setOrders(data.orders);
           const cs = getCafeStore();
@@ -83,9 +86,14 @@ export default function KitchenPortalPage() {
             setIsRinging(false);
           }
         }
+      } else {
+        setFetchError('Failed to fetch kitchen orders from server');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Kitchen load orders error:', e);
+      setFetchError(e.message || 'Error connecting to kitchen order server');
+    } finally {
+      setIsLoading(false);
     }
   }, [isAudioUnlocked, soundEnabled]);
 
@@ -431,7 +439,24 @@ export default function KitchenPortalPage() {
       {/* Tickets Board */}
       <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
         {filterTab === 'active' && (
-          activeKitchenTickets.length === 0 ? (
+          isLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-amber-500 border-t-stone-900 rounded-full animate-spin" />
+              <p className="text-xs text-stone-400 font-semibold">Connecting to live kitchen order stream...</p>
+            </div>
+          ) : fetchError && orders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center space-y-3 max-w-md mx-auto">
+              <AlertCircle className="w-8 h-8 text-rose-500" />
+              <h3 className="font-bold text-white text-sm">Connection Interrupted</h3>
+              <p className="text-xs text-stone-400">{fetchError}</p>
+              <button
+                onClick={() => { setIsLoading(true); loadOrders(); }}
+                className="py-2 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs uppercase transition-all shadow-md active:scale-95"
+              >
+                Retry Connection
+              </button>
+            </div>
+          ) : activeKitchenTickets.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <div className="w-16 h-16 rounded-full bg-stone-800 text-stone-500 flex items-center justify-center mb-4">
                 <UtensilsCrossed className="w-8 h-8" />

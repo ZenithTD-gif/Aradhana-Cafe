@@ -45,6 +45,8 @@ export default function AdminPortalPage() {
 
   // Store data
   const [orders, setOrders] = useState<Order[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [foodItems, setFoodItems] = useState<FoodItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tables, setTables] = useState<TableItem[]>([]);
@@ -91,6 +93,7 @@ export default function AdminPortalPage() {
       const res = await fetch('/api/orders', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
+        setFetchError(null);
         if (data.orders && Array.isArray(data.orders)) {
           setOrders(data.orders);
           const cs = getCafeStore();
@@ -122,9 +125,14 @@ export default function AdminPortalPage() {
             setIsRinging(false);
           }
         }
+      } else {
+        setFetchError('Failed to fetch latest orders from server');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Admin load orders error:', e);
+      setFetchError(e.message || 'Error connecting to order server');
+    } finally {
+      setIsLoading(false);
     }
   }, [isAudioUnlocked, soundEnabled]);
 
@@ -657,7 +665,24 @@ export default function AdminPortalPage() {
               )}
             </div>
 
-            {filteredOrders.length === 0 ? (
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-cream-300 text-center space-y-3">
+                <div className="w-10 h-10 border-4 border-gold-400 border-t-coffee-900 rounded-full animate-spin" />
+                <p className="text-sm font-semibold text-coffee-900">Connecting to live order stream & database...</p>
+              </div>
+            ) : fetchError && orders.length === 0 ? (
+              <div className="p-8 bg-rose-50 border border-rose-200 rounded-3xl text-center space-y-3">
+                <AlertTriangle className="w-8 h-8 text-rose-600 mx-auto" />
+                <h4 className="font-bold text-rose-900">Order Synchronization Warning</h4>
+                <p className="text-xs text-rose-700">{fetchError}</p>
+                <button
+                  onClick={() => { setIsLoading(true); loadOrders(); }}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                >
+                  Retry Connection
+                </button>
+              </div>
+            ) : filteredOrders.length === 0 ? (
               <div className="text-center py-20 bg-white rounded-3xl border border-cream-300 p-8">
                 <ShoppingBag className="w-12 h-12 text-coffee-400 mx-auto mb-3" />
                 <h3 className="font-serif text-lg font-bold text-coffee-950">No orders found in this category</h3>

@@ -171,7 +171,7 @@ export async function getServerOrders(): Promise<Order[]> {
         `)
         .order('created_at', { ascending: false });
 
-      if (!orderErr && dbOrders && dbOrders.length > 0) {
+      if (!orderErr && Array.isArray(dbOrders)) {
         // Transform database rows to domain Order objects
         const mappedOrders: Order[] = dbOrders.map(row => {
           const matchingCoupon = serverCoupons.find(c => c.orderId === row.id);
