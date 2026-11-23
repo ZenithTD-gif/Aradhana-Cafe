@@ -93,6 +93,10 @@ export default function AdminPortalPage() {
         const data = await res.json();
         if (data.orders && Array.isArray(data.orders)) {
           setOrders(data.orders);
+          const cs = getCafeStore();
+          for (const ord of data.orders) {
+            cs.addOrder(ord);
+          }
 
           // Check if unaccepted orders exist across both portals
           const unacceptedOrders = data.orders.filter(

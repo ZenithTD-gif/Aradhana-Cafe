@@ -120,6 +120,9 @@ export class CafeStore {
     if (typeof window === 'undefined') return;
 
     const handleMessage = (msg: RealtimeMessage) => {
+      if (msg.type === 'NEW_PAID_ORDER' && msg.payload?.id) {
+        this.addOrder(msg.payload);
+      }
       this.loadFromStorage();
       this.notifyListeners();
       // NOTE: Zero audio calls here. Audio is handled strictly in Admin and Kitchen views!
@@ -419,6 +422,28 @@ export class CafeStore {
     this.broadcast('NEW_PAID_ORDER', newOrder);
 
     return newOrder;
+  }
+
+  public addOrder(order: Order) {
+    if (!order?.id) return;
+    const exists = this.orders.some(o => o.id === order.id || o.orderNumber === order.orderNumber);
+    if (!exists) {
+      this.orders.unshift(order);
+      if (order.couponCode) {
+        this.coupons.unshift({
+          id: `coupon-${order.id}`,
+          couponCode: order.couponCode,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          tableNumber: order.tableNumber,
+          totalAmount: order.totalAmount,
+          isRedeemed: order.isCouponRedeemed || false,
+          createdAt: order.createdAt,
+        });
+      }
+      this.saveToStorage();
+      this.notifyListeners();
+    }
   }
 
   public acknowledgeOrder(orderId: string, role: 'admin' | 'kitchen') {

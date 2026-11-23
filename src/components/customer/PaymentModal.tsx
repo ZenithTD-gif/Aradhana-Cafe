@@ -89,6 +89,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
       // Update local client store cache as well
       const cafeStore = getCafeStore();
+      cafeStore.addOrder(confirmedOrder);
       cafeStore.broadcast('NEW_PAID_ORDER', confirmedOrder);
 
       // Clear cart
