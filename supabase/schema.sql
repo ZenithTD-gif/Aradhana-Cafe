@@ -215,13 +215,38 @@ CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
 -- ====================================================================
 -- REALTIME REPLICATION CONFIGURATION (SUPABASE)
 -- ====================================================================
-ALTER PUBLICATION supabase_realtime ADD TABLE orders;
-ALTER PUBLICATION supabase_realtime ADD TABLE food_items;
-ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
-ALTER PUBLICATION supabase_realtime ADD TABLE coupons;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'orders'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE orders;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'food_items'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE food_items;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'notifications'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'coupons'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE coupons;
+    END IF;
+END $$;
 
 -- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- ROW LEVEL SECURITY (RLS) POLICIES (IDEMPOTENT)
 -- ====================================================================
 ALTER TABLE restaurant_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
@@ -235,33 +260,66 @@ ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_status_history ENABLE ROW LEVEL SECURITY;
 
 -- Public Read for Menu, Settings, Tables
+DROP POLICY IF EXISTS "Public read restaurant_settings" ON restaurant_settings;
 CREATE POLICY "Public read restaurant_settings" ON restaurant_settings FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public read categories" ON categories;
 CREATE POLICY "Public read categories" ON categories FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public read food_items" ON food_items;
 CREATE POLICY "Public read food_items" ON food_items FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public read tables" ON tables;
 CREATE POLICY "Public read tables" ON tables FOR SELECT USING (true);
 
 -- Customer orders access
+DROP POLICY IF EXISTS "Public insert orders" ON orders;
 CREATE POLICY "Public insert orders" ON orders FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public select orders" ON orders;
 CREATE POLICY "Public select orders" ON orders FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public update orders" ON orders;
 CREATE POLICY "Public update orders" ON orders FOR UPDATE USING (true);
 
+DROP POLICY IF EXISTS "Public insert order_items" ON order_items;
 CREATE POLICY "Public insert order_items" ON order_items FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public select order_items" ON order_items;
 CREATE POLICY "Public select order_items" ON order_items FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Public insert payments" ON payments;
 CREATE POLICY "Public insert payments" ON payments FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public select payments" ON payments;
 CREATE POLICY "Public select payments" ON payments FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Public select coupons" ON coupons;
 CREATE POLICY "Public select coupons" ON coupons FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Public insert coupons" ON coupons;
 CREATE POLICY "Public insert coupons" ON coupons FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public update coupons" ON coupons;
 CREATE POLICY "Public update coupons" ON coupons FOR UPDATE USING (true);
 
+DROP POLICY IF EXISTS "Public access notifications" ON notifications;
 CREATE POLICY "Public access notifications" ON notifications FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Public access order_status_history" ON order_status_history;
 CREATE POLICY "Public access order_status_history" ON order_status_history FOR ALL USING (true);
 
 -- Admin Full Access Policies
+DROP POLICY IF EXISTS "Admin update restaurant_settings" ON restaurant_settings;
 CREATE POLICY "Admin update restaurant_settings" ON restaurant_settings FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Admin full categories" ON categories;
 CREATE POLICY "Admin full categories" ON categories FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Admin full food_items" ON food_items;
 CREATE POLICY "Admin full food_items" ON food_items FOR ALL USING (true);
+
+DROP POLICY IF EXISTS "Admin full tables" ON tables;
 CREATE POLICY "Admin full tables" ON tables FOR ALL USING (true);
 
 -- ====================================================================
